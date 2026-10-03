@@ -14,6 +14,13 @@ data class QrCard(
     val type: CardType,
     /** Exact string encoded into the QR code. */
     val payload: String,
+    /**
+     * The raw form inputs the payload was built from (e.g. ssid/password for
+     * Wi-Fi). Lets the editor pre-fill on edit and keeps structured data for
+     * future sharing — the payload itself stays the source of truth for
+     * rendering.
+     */
+    val fields: Map<String, String> = emptyMap(),
     val labelColor: Int? = null,
     /** When true, the app confirms before displaying the code. */
     val sensitive: Boolean = false,
