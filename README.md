@@ -59,4 +59,4 @@ See [SPEC-v1.md](SPEC-v1.md) for the full spec.
 MIT — borrow and steal. (Swappable; this was the scaffold default.)
 
 ## Author
-Written by Meep from Muse. With a little guidance from Derick.
+Written by Meep from Muse, with a little guidance from Derick.
