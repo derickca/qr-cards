@@ -98,7 +98,10 @@ class MainActivity : AppCompatActivity() {
                     true
                 }
                 R.id.action_import_backup -> {
-                    importBackupLauncher.launch(arrayOf("application/octet-stream", "*/*"))
+                    // Only our own backup MIME type: letting the picker show
+                    // every file makes it easy to grab a PNG/SVG by mistake,
+                    // which then fails decryption with a cryptic error.
+                    importBackupLauncher.launch(arrayOf("application/octet-stream"))
                     true
                 }
                 else -> false

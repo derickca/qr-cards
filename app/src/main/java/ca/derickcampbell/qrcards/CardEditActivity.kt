@@ -329,10 +329,15 @@ class CardEditActivity : AppCompatActivity() {
         val density = resources.displayMetrics.density
         val size = (40 * density).toInt()
         val margin = (8 * density).toInt()
+        // Padding shrinks the dot image inside its view so the selection ring
+        // (drawn as the view background) stays visible around it instead of
+        // hiding behind the opaque dot.
+        val pad = (5 * density).toInt()
         colorOptions.forEach { color ->
             val dot = ImageView(this).apply {
                 layoutParams = LinearLayout.LayoutParams(size, size)
                     .apply { setMargins(margin, 0, margin, 0) }
+                setPadding(pad, pad, pad, pad)
                 setImageResource(if (color == null) R.drawable.dot_none else R.drawable.dot)
                 if (color != null) imageTintList = ColorStateList.valueOf(color)
                 contentDescription =

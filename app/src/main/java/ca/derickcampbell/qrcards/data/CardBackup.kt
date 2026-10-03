@@ -47,7 +47,19 @@ object CardBackup {
             context.contentResolver.openInputStream(source)?.use { input ->
                 staging.outputStream().use { input.copyTo(it) }
             } ?: throw IllegalArgumentException("Cannot read backup file")
-            val bytes = encryptedFile(context, staging).openFileInput().use { it.readBytes() }
+            // Decryption fails when the file isn't one of our backups (e.g. a
+            // PNG/SVG picked by mistake) or was encrypted on a different install
+            // (the key lives in this install's Keystore). Report that plainly
+            // instead of leaking the crypto library's message.
+            val bytes = try {
+                encryptedFile(context, staging).openFileInput().use { it.readBytes() }
+            } catch (e: Exception) {
+                throw IllegalArgumentException(
+                    "Couldn't decrypt this backup — it may not be a QR Cards " +
+                        "backup file, or it was created on a different install.",
+                    e
+                )
+            }
             val repo = CardRepository(context)
             val cards = try {
                 val arr = JSONObject(bytes.toString(Charsets.UTF_8)).getJSONArray("cards")
