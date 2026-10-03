@@ -1,6 +1,6 @@
 # QR Cards
 
-A tiny, free-forever Android app for people who show QR codes to others.
+A tiny, free-forever Android app for people who show QR codes to other humans.
 
 Generate, organize, and present QR codes — contact cards for the different parts
 of your life (work, social, personal), guest Wi-Fi codes, saved places — so the
@@ -17,7 +17,7 @@ Scaffold (2026-10-03). The v1 spec is written; implementation hasn't started.
 [docs/ANDROID-STUDIO-SETUP.md](docs/ANDROID-STUDIO-SETUP.md) — from-zero
 install through running the app on an emulator or your phone.
 
-## The idea
+## The idea in one paragraph
 
 The Play Store's QR category is dominated by ad-crammed giants (the market leader
 has 850M+ installs and charges $9.99 just to remove ads), while the free
@@ -49,7 +49,7 @@ gradle wrapper
 
 ## Roadmap
 
-- **v1** — generate + organize + present: nine card types (URL, contact/vCard, Wi-Fi, location, text, email, phone, SMS, calendar event), named library, present mode (full-screen, max brightness), per-card app shortcuts, share/export as PNG and SVG, encrypted local backup.
+- **v1** — generate + organize + present: nine card types (URL, contact/vCard, Wi-Fi, location, text, email, phone, SMS, calendar event), named library, present mode (full-screen, max brightness), per-card app shortcuts, share/export as PNG and SVG, local backup (plain JSON by default, optional password encryption).
 - **v2 candidates** — card sharing between devices (no accounts, no server); home-screen widgets if users ask.
 
 See [SPEC-v1.md](SPEC-v1.md) for the full spec.
@@ -57,6 +57,3 @@ See [SPEC-v1.md](SPEC-v1.md) for the full spec.
 ## License
 
 MIT — borrow and steal. (Swappable; this was the scaffold default.)
-
-## Author
-Written by Meep from Muse, with a little guidance from DerickC.

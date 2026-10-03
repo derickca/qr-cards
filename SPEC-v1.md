@@ -17,7 +17,7 @@ Anyone who regularly shares contact info, Wi-Fi access, or a location by having 
 3. **Present mode** — full-screen QR at maximum brightness, for reliable scanning in sunlight or bad lighting.
 4. **Quick access** — per-card app shortcuts (long-press the launcher icon to jump straight to a card in present mode). Home-screen widgets are deferred: most users only have room for a few widgets, so we'll wait for real user demand.
 5. **Share / export** — send a card as a PNG image through any app, or download high-resolution PNG and SVG files (for marketing materials, signage, print shops). Vector SVG export is paywalled in competing apps; here it's free.
-7. **Backup** — encrypted local export file, restore from file. No cloud involved.
+7. **Backup** — local export file, restore from file. Plain JSON by default (always restorable, on any install or device); optional password encryption (AES-256-GCM, portable). No cloud involved.
 8. **Correctness** — every generated code scans with the stock Android and iOS cameras. Wi-Fi payloads escaped properly, vCard 3.0, sensible error-correction defaults. A code that "scans but doesn't work" is a bug, not a platform quirk.
 
 ## Non-goals (v1)
@@ -47,7 +47,7 @@ Anyone who regularly shares contact info, Wi-Fi access, or a location by having 
 - Contacts: vCard 3.0 default (widest real-world support); MECARD only when code size demands it. Keep contact cards lean — name, phone, email, org, URL; no photos.
 - Wi-Fi: `T:WPA` (phone and router negotiate the actual mode); backslash-escape `\ ; , : "` in SSID/password; never trim leading/trailing spaces; `H:true` only for hidden SSIDs.
 - Error correction: M for on-screen display, H for print/export.
-- Storage: local only. Export file encrypted.
+- Storage: local only. Backup file plain JSON by default (always restorable); optional password encryption.
 
 ## Open questions
 

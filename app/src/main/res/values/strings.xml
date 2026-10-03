@@ -14,6 +14,17 @@
     <string name="backup_export_failed">Backup export failed: %1$s</string>
     <string name="backup_imported">Imported %1$d cards</string>
     <string name="backup_import_failed">Import failed: %1$s</string>
+    <string name="backup_export_title">Export backup</string>
+    <string name="backup_export_message">Save your cards to a file you keep. An unencrypted backup always restores — but anyone who finds the file can read it.</string>
+    <string name="backup_encrypt_check">Encrypt with a password</string>
+    <string name="backup_password">Password</string>
+    <string name="backup_password_confirm">Confirm password</string>
+    <string name="backup_password_title">Encrypted backup</string>
+    <string name="backup_password_message">This backup is encrypted. Enter its password to restore it.</string>
+    <string name="password_required">Enter a password</string>
+    <string name="passwords_dont_match">Passwords don\'t match</string>
+    <string name="continue_label">Continue</string>
+    <string name="restore_label">Restore</string>
 
     <!-- Card types -->
     <string name="type_url">Link</string>
