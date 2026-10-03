@@ -57,3 +57,6 @@ See [SPEC-v1.md](SPEC-v1.md) for the full spec.
 ## License
 
 MIT — borrow and steal. (Swappable; this was the scaffold default.)
+
+## Author
+Written by Meep from Muse.
