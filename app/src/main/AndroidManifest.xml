@@ -18,6 +18,26 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- Present mode. Exported so launcher app-shortcuts can deep-link here. -->
+        <activity
+            android:name=".CardDetailActivity"
+            android:exported="true"
+            android:launchMode="singleTop" />
+        <activity
+            android:name=".CardEditActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
+
+        <!-- Serves PNGs shared via ACTION_SEND. Grant is per-share intent. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/filepaths" />
+        </provider>
     </application>
 
 </manifest>

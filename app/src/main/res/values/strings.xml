@@ -1,4 +1,88 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">QR Cards</string>
+    <string name="qr_code">QR code</string>
+
+    <!-- Library -->
+    <string name="search_cards">Search cards</string>
+    <string name="no_cards">No cards yet</string>
+    <string name="no_cards_hint">Tap + to create your first QR card.</string>
+    <string name="no_results">No cards match your search.</string>
+    <string name="menu_export_backup">Export backup</string>
+    <string name="menu_import_backup">Import backup</string>
+    <string name="backup_exported">Backup exported</string>
+    <string name="backup_export_failed">Backup export failed: %1$s</string>
+    <string name="backup_imported">Imported %1$d cards</string>
+    <string name="backup_import_failed">Import failed: %1$s</string>
+
+    <!-- Card types -->
+    <string name="type_url">Link</string>
+    <string name="type_contact">Contact</string>
+    <string name="type_wifi">Wi-Fi</string>
+    <string name="type_location">Location</string>
+    <string name="type_text">Note</string>
+    <string name="type_email">Email</string>
+    <string name="type_phone">Phone</string>
+    <string name="type_sms">Text message</string>
+    <string name="type_calendar_event">Event</string>
+
+    <!-- Detail / present mode -->
+    <string name="share_png">Share PNG</string>
+    <string name="export_svg">Export SVG</string>
+    <string name="edit">Edit</string>
+    <string name="delete">Delete</string>
+    <string name="delete_card_title">Delete card?</string>
+    <string name="delete_card_message">“%1$s” will be permanently deleted.</string>
+    <string name="cancel">Cancel</string>
+    <string name="card_deleted">Card deleted</string>
+    <string name="card_not_found">Card not found</string>
+    <string name="render_failed">Could not render QR code</string>
+    <string name="share_card">Share card</string>
+    <string name="share_failed">Could not share card: %1$s</string>
+    <string name="svg_saved">SVG saved</string>
+    <string name="svg_save_failed">Could not save SVG: %1$s</string>
+    <string name="sensitive_title">Sensitive card</string>
+    <string name="sensitive_message">This card is marked sensitive — display it?</string>
+    <string name="show">Show</string>
+
+    <!-- Editor -->
+    <string name="new_card">New card</string>
+    <string name="edit_card">Edit card</string>
+    <string name="card_name">Card name</string>
+    <string name="card_name_hint">e.g. Work contact</string>
+    <string name="card_type">Card type</string>
+    <string name="details">Details</string>
+    <string name="label_color">Label color</string>
+    <string name="color_none">No color</string>
+    <string name="sensitive_check">Mark as sensitive (confirm before displaying)</string>
+    <string name="save">Save</string>
+    <string name="name_required">Give the card a name</string>
+    <string name="card_saved">Card saved</string>
+    <string name="save_failed">Could not save card</string>
+    <string name="invalid_number">Enter a valid number</string>
+
+    <!-- Form fields -->
+    <string name="field_url">URL</string>
+    <string name="field_first_name">First name</string>
+    <string name="field_last_name">Last name</string>
+    <string name="field_organization">Organization</string>
+    <string name="field_phone">Phone</string>
+    <string name="field_email">Email</string>
+    <string name="field_website">Website</string>
+    <string name="field_ssid">Network name (SSID)</string>
+    <string name="field_password">Password</string>
+    <string name="field_hidden">Hidden network</string>
+    <string name="wifi_plaintext_note">The password is baked into the QR code as plain text — anyone who scans it can read it. Use a guest network, never your main LAN password.</string>
+    <string name="field_latitude">Latitude</string>
+    <string name="field_longitude">Longitude</string>
+    <string name="field_text">Text</string>
+    <string name="field_email_address">Email address</string>
+    <string name="field_subject">Subject</string>
+    <string name="field_body">Message</string>
+    <string name="field_number">Phone number</string>
+    <string name="field_message">Message</string>
+    <string name="field_title">Event title</string>
+    <string name="field_starts">Starts</string>
+    <string name="field_ends">Ends</string>
+    <string name="field_location">Location</string>
 </resources>
