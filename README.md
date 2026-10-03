@@ -1,6 +1,6 @@
 # QR Cards
 
-A tiny, free-forever Android app for people who show QR codes to other humans.
+A tiny, free-forever Android app for people who show QR codes to others.
 
 Generate, organize, and present QR codes — contact cards for the different parts
 of your life (work, social, personal), guest Wi-Fi codes, saved places — so the
