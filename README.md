@@ -17,7 +17,7 @@ Scaffold (2026-10-03). The v1 spec is written; implementation hasn't started.
 [docs/ANDROID-STUDIO-SETUP.md](docs/ANDROID-STUDIO-SETUP.md) — from-zero
 install through running the app on an emulator or your phone.
 
-## The idea in one paragraph
+## The idea
 
 The Play Store's QR category is dominated by ad-crammed giants (the market leader
 has 850M+ installs and charges $9.99 just to remove ads), while the free
