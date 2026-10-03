@@ -13,6 +13,10 @@ setting — see [SPEC-v1.md](SPEC-v1.md).
 
 Scaffold (2026-10-03). The v1 spec is written; implementation hasn't started.
 
+**New to Android development?** Start with
+[docs/ANDROID-STUDIO-SETUP.md](docs/ANDROID-STUDIO-SETUP.md) — from-zero
+install through running the app on an emulator or your phone.
+
 ## The idea in one paragraph
 
 The Play Store's QR category is dominated by ad-crammed giants (the market leader
