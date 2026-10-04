@@ -9,12 +9,26 @@ android {
 
     defaultConfig {
         // NOTE: applicationId is permanent once published to the Play Store.
-        // Easy to change now, impossible later — speak up before first release.
+        // Easy to change now, impossible later â speak up before first release.
         applicationId = "ca.derickcampbell.qrcards"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.0.2"
+    }
+
+    signingConfigs {
+        // Stable debug key for CI: every CI build signs with this keystore, so
+        // updates install cleanly over each other. Debug credentials are the
+        // public android/android pair (same as every dev machine's) â safe to
+        // commit. The Play Store upload key is a different, secret key.
+        getByName("debug") {
+            storeFile = rootProject.file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+            storeType = "PKCS12"
+        }
     }
 
     buildTypes {
@@ -40,7 +54,7 @@ android {
 
 dependencies {
     // QR generation. ZXing is in maintenance mode (bug fixes only) but the
-    // encoder is mature and stable — still the standard choice.
+    // encoder is mature and stable â still the standard choice.
     implementation("com.google.zxing:core:3.5.3")
 
     implementation("androidx.core:core-ktx:1.13.1")
