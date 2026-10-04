@@ -82,6 +82,10 @@
     <string name="color_none">No color</string>
     <string name="sensitive_check">Sensitive (confirm before display)</string>
     <string name="save">Save</string>
+    <string name="discard_title">Discard changes?</string>
+    <string name="discard_message">Your edits will be lost.</string>
+    <string name="keep_editing">Keep editing</string>
+    <string name="discard">Discard</string>
     <string name="name_required">Give the card a name</string>
     <string name="card_saved">Card saved</string>
     <string name="save_failed">Could not save card</string>

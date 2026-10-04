@@ -49,17 +49,18 @@ import java.time.format.DateTimeFormatter
  * buttons are pinned to the bottom of the screen.
  *
  * The five everyday types are always visible and the rarer four (note,
- * email, phone, text message) sit behind a "More" tab that opens a second
- * row in place. On wide screens (tablets, landscape) all nine tabs are
- * shown with no "More" needed. Tabs are icon-only (the header names the
- * selected type, so tapping one identifies it immediately) and weighted, so
- * the row always fits the screen and no tab changes size when the second
- * row opens. A fixed-height header names the selected type so the tabs
- * never jump around.
+ * email, phone, text message) sit behind a "More" tab that appends them to
+ * the same row in place. On wide screens (tablets, landscape) all nine tabs
+ * are shown with no "More" needed. Tabs are icon-only (the header names the
+ * selected type, so tapping one identifies it immediately) and share a
+ * single fixed size with fixed margins, so the row never jumps, resizes, or
+ * scrolls when More/Less is pressed. A fixed-height header names the
+ * selected type so the tabs never jump around.
  *
  * Everything the user types is stashed per card type before switching, so
  * moving between types — or rotating the phone — never loses data, and
- * types that share a field keep each other's entries.
+ * types that share a field keep each other's entries. Cancel asks for
+ * confirmation when there are unsaved edits.
  *
  * Contact cards can import from the system contact picker (no contacts
  * permission needed — the user hands us one contact). When the contact has
@@ -79,6 +80,8 @@ class CardEditActivity : AppCompatActivity() {
 
     companion object {
         const val EXTRA_CARD_ID = "card_id"
+        /** Tabs are sized for ten slots so every tab is identical in both states. */
+        private const val TAB_SLOTS = 10
     }
 
     private lateinit var binding: ActivityCardEditBinding
@@ -100,6 +103,11 @@ class CardEditActivity : AppCompatActivity() {
     // rotating) never loses data. collectFields() already captures text
     // fields, the hidden-network checkbox, and the date/time pickers.
     private val typeFieldCache = mutableMapOf<CardType, MutableMap<String, String>>()
+
+    // True once the user has edited anything (typed, picked, or imported),
+    // so Cancel can confirm before discarding. Prefills and programmatic
+    // setText calls never set it — only real user actions do.
+    private var formDirty = false
 
     // Multi-value field state (contact phone/email): every known value plus
     // which one is currently selected. Keyed by field key ("phone", "email").
@@ -172,8 +180,11 @@ class CardEditActivity : AppCompatActivity() {
 
         buildForm(prefillFor(currentType))
         buildColorRow()
-        binding.cancelButton.setOnClickListener { finish() }
+        binding.cancelButton.setOnClickListener { onCancel() }
         binding.saveButton.setOnClickListener { save() }
+        // Registered last so prefills and restores never mark the form dirty.
+        binding.cardNameInput.doOnTextChanged { _, _, _, _ -> formDirty = true }
+        binding.sensitiveCheck.setOnCheckedChangeListener { _, _ -> formDirty = true }
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -183,6 +194,7 @@ class CardEditActivity : AppCompatActivity() {
         if (selectedColor != null) outState.putInt("selectedColor", selectedColor!!)
         outState.putString("cardName", binding.cardNameInput.text?.toString().orEmpty())
         outState.putBoolean("sensitive", binding.sensitiveCheck.isChecked)
+        outState.putBoolean("formDirty", formDirty)
         val cache = HashMap<String, HashMap<String, String>>()
         typeFieldCache.forEach { (type, fields) -> cache[type.name] = HashMap(fields) }
         outState.putSerializable("typeFieldCache", cache)
@@ -201,6 +213,7 @@ class CardEditActivity : AppCompatActivity() {
         selectedColor = if (state.containsKey("selectedColor")) state.getInt("selectedColor") else null
         binding.cardNameInput.setText(state.getString("cardName").orEmpty())
         binding.sensitiveCheck.isChecked = state.getBoolean("sensitive")
+        formDirty = state.getBoolean("formDirty")
         val cache = state.getSerializable("typeFieldCache") as? HashMap<String, HashMap<String, String>>
         cache?.forEach { (typeName, fields) ->
             runCatching { CardType.valueOf(typeName) }.getOrNull()?.let {
@@ -265,50 +278,52 @@ class CardEditActivity : AppCompatActivity() {
     }
 
     /**
-     * Wide screens (tablets, landscape) fit all nine tabs in one row; narrow
-     * screens show the five everyday types plus a More/Less expander, with
-     * the rarer four on a second row when expanded.
+     * One row, always. Every tab shares a single fixed size and fixed
+     * margins — derived from the measured row width and capped — so nothing
+     * moves, resizes, or scrolls when More/Less is pressed. Wide screens
+     * (tablets, landscape) fit all nine tabs with no "More" needed.
      */
     private fun refreshTypeTabs() {
-        val row1 = binding.typeTabRow1
-        val row2 = binding.typeTabRow2
-        row1.removeAllViews()
-        row2.removeAllViews()
+        val row = binding.typeTabRow1
+        row.removeAllViews()
         val density = resources.displayMetrics.density
-        val wide = row1.width >= (9 * 56 * density).toInt()
-        if (wide) {
-            CardType.values().forEach { row1.addView(makeTypeTab(it)) }
-            row2.visibility = View.GONE
+        val measured = row.width
+        // Ten slots keeps every tab identical in both states; the cap keeps
+        // tablets from growing dinner-plate tabs. Falls back until the first
+        // layout pass measures the row (re-run via post in onCreate).
+        val tabSize = if (measured > 0) {
+            (measured / TAB_SLOTS - 2 * (2 * density).toInt())
+                .coerceAtMost((64 * density).toInt())
         } else {
-            primaryTypes.forEach { row1.addView(makeTypeTab(it)) }
-            row1.addView(makeMoreLessTab())
+            (40 * density).toInt()
+        }
+        val wide = measured >= (9 * 56 * density).toInt()
+        if (wide) {
+            CardType.values().forEach { row.addView(makeTypeTab(it, tabSize)) }
+        } else {
+            primaryTypes.forEach { row.addView(makeTypeTab(it, tabSize)) }
+            row.addView(makeMoreLessTab(tabSize))
             if (typesExpanded || currentType in nicheTypes) {
                 typesExpanded = true
-                nicheTypes.forEach { row2.addView(makeTypeTab(it)) }
-                row2.visibility = View.VISIBLE
-            } else {
-                row2.visibility = View.GONE
+                nicheTypes.forEach { row.addView(makeTypeTab(it, tabSize)) }
             }
         }
     }
 
     /**
      * One icon-only type tab. No label: the header above names the selected
-     * type, so tapping a tab identifies it immediately. Every tab is
-     * weighted, so the row always fits the screen and no tab changes size
-     * when the second row opens.
+     * type, so tapping a tab identifies it immediately.
      */
-    private fun makeTypeTab(type: CardType): LinearLayout {
+    private fun makeTypeTab(type: CardType, tabSize: Int): LinearLayout {
         val density = resources.displayMetrics.density
         val tab = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            val padV = (12 * density).toInt()
-            setPadding(0, padV, 0, padV)
             minimumHeight = (48 * density).toInt()
+            val margin = (2 * density).toInt()
             layoutParams = LinearLayout.LayoutParams(
-                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f
-            )
+                tabSize, LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { setMargins(margin, 0, margin, 0) }
             isClickable = true
             isFocusable = true
             contentDescription = typeLabel(type, this@CardEditActivity)
@@ -325,18 +340,17 @@ class CardEditActivity : AppCompatActivity() {
         return tab
     }
 
-    private fun makeMoreLessTab(): LinearLayout {
+    private fun makeMoreLessTab(tabSize: Int): LinearLayout {
         val density = resources.displayMetrics.density
         val expanded = typesExpanded
         val tab = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            val padV = (12 * density).toInt()
-            setPadding(0, padV, 0, padV)
             minimumHeight = (48 * density).toInt()
+            val margin = (2 * density).toInt()
             layoutParams = LinearLayout.LayoutParams(
-                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f
-            )
+                tabSize, LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { setMargins(margin, 0, margin, 0) }
             isClickable = true
             isFocusable = true
             contentDescription =
@@ -498,7 +512,10 @@ class CardEditActivity : AppCompatActivity() {
         til.addView(edit)
         binding.formContainer.addView(til)
         fieldLayouts[key] = til
-        edit.doOnTextChanged { _, _, _, _ -> til.error = null }
+        edit.doOnTextChanged { _, _, _, _ ->
+            til.error = null
+            formDirty = true
+        }
         return edit
     }
 
@@ -534,7 +551,10 @@ class CardEditActivity : AppCompatActivity() {
         }
         binding.formContainer.addView(til)
         fieldLayouts[key] = til
-        edit.doOnTextChanged { _, _, _, _ -> til.error = null }
+        edit.doOnTextChanged { _, _, _, _ ->
+            til.error = null
+            formDirty = true
+        }
         return edit
     }
 
@@ -557,6 +577,7 @@ class CardEditActivity : AppCompatActivity() {
             .setSingleChoiceItems(items, optionSelection[key] ?: 0) { dialog, which ->
                 optionSelection[key] = which
                 fieldLayouts[key]?.editText?.setText(options[which].value)
+                formDirty = true
                 dialog.dismiss()
             }
             .show()
@@ -658,6 +679,7 @@ class CardEditActivity : AppCompatActivity() {
                     "website" to website,
                 )
                 buildForm(prefillFor(CardType.CONTACT))
+                formDirty = true
             } ?: throw IllegalArgumentException("empty contact cursor")
         } catch (_: Exception) {
             Toast.makeText(this, R.string.contact_import_failed, Toast.LENGTH_SHORT).show()
@@ -731,6 +753,8 @@ class CardEditActivity : AppCompatActivity() {
         MaterialCheckBox(this).apply {
             this.text = text
             isChecked = checked
+            // Registered after the initial set so the prefill never marks dirty.
+            setOnCheckedChangeListener { _, _ -> formDirty = true }
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
@@ -802,6 +826,7 @@ class CardEditActivity : AppCompatActivity() {
                 dateTimeValues[key] =
                     LocalDateTime.of(date, LocalTime.of(timePicker.hour, timePicker.minute))
                 refreshDateTimeButton(key)
+                formDirty = true
             }
             timePicker.show(supportFragmentManager, "time_$key")
         }
@@ -825,6 +850,7 @@ class CardEditActivity : AppCompatActivity() {
                 setOnClickListener {
                     selectedColor = color
                     refreshColorSelection()
+                    formDirty = true
                 }
             }
             binding.colorRow.addView(dot)
@@ -864,6 +890,23 @@ class CardEditActivity : AppCompatActivity() {
     }
 
     // -- save --
+
+    /**
+     * Cancel leaves without saving. When the user has unsaved edits,
+     * confirm first so a stray tap can't silently discard them.
+     */
+    private fun onCancel() {
+        if (!formDirty) {
+            finish()
+            return
+        }
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.discard_title)
+            .setMessage(R.string.discard_message)
+            .setNegativeButton(R.string.keep_editing, null)
+            .setPositiveButton(R.string.discard) { _, _ -> finish() }
+            .show()
+    }
 
     private fun save() {
         clearErrors()
