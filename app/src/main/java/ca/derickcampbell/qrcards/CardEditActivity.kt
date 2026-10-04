@@ -42,11 +42,24 @@ import java.time.format.DateTimeFormatter
 /**
  * Create/edit a card.
  *
- * The card type is picked from icon tabs: the five everyday types are always
- * visible and the rarer four (note, email, phone, text message) sit behind a
- * "More" tab that expands the row in place. On wide screens (tablets,
- * landscape) all nine tabs are shown with no "More" needed. A fixed-height
- * header names the selected type so the tabs never jump around.
+ * Layout order: the type title sits at the top of the page, the icon-only
+ * type tabs sit below it, and the card name follows — so the card name and
+ * all fillable fields stay together instead of being split apart. There is
+ * no back arrow (in some UIs it implies "save"); explicit Cancel and Save
+ * buttons are pinned to the bottom of the screen.
+ *
+ * The five everyday types are always visible and the rarer four (note,
+ * email, phone, text message) sit behind a "More" tab that opens a second
+ * row in place. On wide screens (tablets, landscape) all nine tabs are
+ * shown with no "More" needed. Tabs are icon-only (the header names the
+ * selected type, so tapping one identifies it immediately) and weighted, so
+ * the row always fits the screen and no tab changes size when the second
+ * row opens. A fixed-height header names the selected type so the tabs
+ * never jump around.
+ *
+ * Everything the user types is stashed per card type before switching, so
+ * moving between types — or rotating the phone — never loses data, and
+ * types that share a field keep each other's entries.
  *
  * Contact cards can import from the system contact picker (no contacts
  * permission needed — the user hands us one contact). When the contact has
@@ -82,6 +95,11 @@ class CardEditActivity : AppCompatActivity() {
         CardType.TEXT, CardType.EMAIL, CardType.PHONE, CardType.SMS,
     )
     private var typesExpanded = false
+
+    // Everything the user typed, kept per card type so switching types (or
+    // rotating) never loses data. collectFields() already captures text
+    // fields, the hidden-network checkbox, and the date/time pickers.
+    private val typeFieldCache = mutableMapOf<CardType, MutableMap<String, String>>()
 
     // Multi-value field state (contact phone/email): every known value plus
     // which one is currently selected. Keyed by field key ("phone", "email").
@@ -120,7 +138,6 @@ class CardEditActivity : AppCompatActivity() {
         binding = ActivityCardEditBinding.inflate(layoutInflater)
         setContentView(binding.root)
         repository = CardRepository(this)
-        typesExpanded = savedInstanceState?.getBoolean("typesExpanded") == true
 
         val id = intent.getStringExtra(EXTRA_CARD_ID)
         editingCard = id?.let { repository.get(it) }
@@ -133,30 +150,87 @@ class CardEditActivity : AppCompatActivity() {
         binding.toolbar.title = getString(
             if (editingCard == null) R.string.new_card else R.string.edit_card
         )
-        binding.toolbar.setNavigationOnClickListener { finish() }
 
         val card = editingCard
-        currentType = card?.type ?: CardType.URL
-        card?.fieldOptions?.forEach { (key, options) ->
-            optionLists[key] = options.toMutableList()
+        if (savedInstanceState != null) {
+            restoreState(savedInstanceState)
+        } else {
+            currentType = card?.type ?: CardType.URL
+            typesExpanded = false
+            card?.fieldOptions?.forEach { (key, options) ->
+                optionLists[key] = options.toMutableList()
+            }
+            binding.cardNameInput.setText(card?.name.orEmpty())
+            selectedColor = card?.labelColor
+            binding.sensitiveCheck.isChecked = card?.sensitive == true
         }
-        binding.cardNameInput.setText(card?.name.orEmpty())
-        selectedColor = card?.labelColor
-        binding.sensitiveCheck.isChecked = card?.sensitive == true
 
         refreshTypeHeader()
         refreshTypeTabs()
         // Re-measure once laid out: tablets and landscape get all nine tabs.
-        binding.typeTabRow.post { refreshTypeTabs() }
+        binding.typeTabRow1.post { refreshTypeTabs() }
 
-        buildForm(prefill = card?.fields)
+        buildForm(prefillFor(currentType))
         buildColorRow()
+        binding.cancelButton.setOnClickListener { finish() }
         binding.saveButton.setOnClickListener { save() }
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
-        super.onSaveInstanceState(outState)
+        stashForm()
+        outState.putString("currentType", currentType.name)
         outState.putBoolean("typesExpanded", typesExpanded)
+        if (selectedColor != null) outState.putInt("selectedColor", selectedColor!!)
+        outState.putString("cardName", binding.cardNameInput.text?.toString().orEmpty())
+        outState.putBoolean("sensitive", binding.sensitiveCheck.isChecked)
+        val cache = HashMap<String, HashMap<String, String>>()
+        typeFieldCache.forEach { (type, fields) -> cache[type.name] = HashMap(fields) }
+        outState.putSerializable("typeFieldCache", cache)
+        val lists = HashMap<String, ArrayList<FieldOption>>()
+        optionLists.forEach { (key, options) -> lists[key] = ArrayList(options) }
+        outState.putSerializable("optionLists", lists)
+        outState.putSerializable("optionSelection", HashMap(optionSelection))
+        super.onSaveInstanceState(outState)
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun restoreState(state: Bundle) {
+        currentType = runCatching { CardType.valueOf(state.getString("currentType")!!) }
+            .getOrDefault(CardType.URL)
+        typesExpanded = state.getBoolean("typesExpanded")
+        selectedColor = if (state.containsKey("selectedColor")) state.getInt("selectedColor") else null
+        binding.cardNameInput.setText(state.getString("cardName").orEmpty())
+        binding.sensitiveCheck.isChecked = state.getBoolean("sensitive")
+        val cache = state.getSerializable("typeFieldCache") as? HashMap<String, HashMap<String, String>>
+        cache?.forEach { (typeName, fields) ->
+            runCatching { CardType.valueOf(typeName) }.getOrNull()?.let {
+                typeFieldCache[it] = fields
+            }
+        }
+        val lists = state.getSerializable("optionLists") as? HashMap<String, ArrayList<FieldOption>>
+        lists?.forEach { (key, options) -> optionLists[key] = options.toMutableList() }
+        val sel = state.getSerializable("optionSelection") as? HashMap<String, Int>
+        sel?.forEach { (key, index) -> optionSelection[key] = index }
+    }
+
+    // -- form data preservation --
+
+    /** Keep everything the user typed for the current type before leaving it. */
+    private fun stashForm() {
+        typeFieldCache[currentType] = collectFields().toMutableMap()
+    }
+
+    /** Prefill for a type: the user's cached entries first, else the saved card's. */
+    private fun prefillFor(type: CardType): Map<String, String>? =
+        typeFieldCache[type] ?: editingCard?.takeIf { it.type == type }?.fields
+
+    private fun switchType(newType: CardType) {
+        if (newType == currentType) return
+        stashForm()
+        currentType = newType
+        refreshTypeHeader()
+        refreshTypeTabs()
+        buildForm(prefillFor(newType))
     }
 
     // -- card-type tabs --
@@ -191,41 +265,50 @@ class CardEditActivity : AppCompatActivity() {
     }
 
     /**
-     * Wide screens (tablets, landscape) fit all nine tabs; narrow screens
-     * show the five everyday types plus a More/Less expander.
+     * Wide screens (tablets, landscape) fit all nine tabs in one row; narrow
+     * screens show the five everyday types plus a More/Less expander, with
+     * the rarer four on a second row when expanded.
      */
     private fun refreshTypeTabs() {
-        val row = binding.typeTabRow
-        row.removeAllViews()
+        val row1 = binding.typeTabRow1
+        val row2 = binding.typeTabRow2
+        row1.removeAllViews()
+        row2.removeAllViews()
         val density = resources.displayMetrics.density
-        val wide = row.width >= (9 * 64 * density).toInt()
+        val wide = row1.width >= (9 * 56 * density).toInt()
         if (wide) {
-            CardType.values().forEach { addTypeTab(it, weighted = true) }
-        } else if (typesExpanded || currentType in nicheTypes) {
-            typesExpanded = true
-            CardType.values().forEach { addTypeTab(it, weighted = false) }
-            addMoreLessTab(expanded = true)
+            CardType.values().forEach { row1.addView(makeTypeTab(it)) }
+            row2.visibility = View.GONE
         } else {
-            primaryTypes.forEach { addTypeTab(it, weighted = true) }
-            addMoreLessTab(expanded = false)
+            primaryTypes.forEach { row1.addView(makeTypeTab(it)) }
+            row1.addView(makeMoreLessTab())
+            if (typesExpanded || currentType in nicheTypes) {
+                typesExpanded = true
+                nicheTypes.forEach { row2.addView(makeTypeTab(it)) }
+                row2.visibility = View.VISIBLE
+            } else {
+                row2.visibility = View.GONE
+            }
         }
     }
 
-    private fun addTypeTab(type: CardType, weighted: Boolean) {
+    /**
+     * One icon-only type tab. No label: the header above names the selected
+     * type, so tapping a tab identifies it immediately. Every tab is
+     * weighted, so the row always fits the screen and no tab changes size
+     * when the second row opens.
+     */
+    private fun makeTypeTab(type: CardType): LinearLayout {
         val density = resources.displayMetrics.density
         val tab = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            val pad = (8 * density).toInt()
-            setPadding(pad, pad, pad, pad)
+            val padV = (12 * density).toInt()
+            setPadding(0, padV, 0, padV)
             minimumHeight = (48 * density).toInt()
-            layoutParams = if (weighted) {
-                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            } else {
-                LinearLayout.LayoutParams(
-                    (64 * density).toInt(), LinearLayout.LayoutParams.WRAP_CONTENT
-                )
-            }
+            layoutParams = LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f
+            )
             isClickable = true
             isFocusable = true
             contentDescription = typeLabel(type, this@CardEditActivity)
@@ -236,40 +319,28 @@ class CardEditActivity : AppCompatActivity() {
                 (24 * density).toInt(), (24 * density).toInt()
             )
         }
-        val label = TextView(this).apply {
-            text = typeLabel(type, this@CardEditActivity)
-            setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_LabelSmall)
-            gravity = Gravity.CENTER
-        }
         tab.addView(icon)
-        tab.addView(label)
-        styleTab(tab, icon, label, selected = type == currentType)
-        tab.setOnClickListener {
-            if (currentType != type) {
-                currentType = type
-                onTypeChanged()
-            }
-        }
-        binding.typeTabRow.addView(tab)
+        styleTab(tab, icon, selected = type == currentType)
+        tab.setOnClickListener { switchType(type) }
+        return tab
     }
 
-    private fun addMoreLessTab(expanded: Boolean) {
+    private fun makeMoreLessTab(): LinearLayout {
         val density = resources.displayMetrics.density
+        val expanded = typesExpanded
         val tab = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            val pad = (8 * density).toInt()
-            setPadding(pad, pad, pad, pad)
+            val padV = (12 * density).toInt()
+            setPadding(0, padV, 0, padV)
             minimumHeight = (48 * density).toInt()
-            layoutParams = if (expanded) {
-                LinearLayout.LayoutParams(
-                    (64 * density).toInt(), LinearLayout.LayoutParams.WRAP_CONTENT
-                )
-            } else {
-                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            }
+            layoutParams = LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f
+            )
             isClickable = true
             isFocusable = true
+            contentDescription =
+                getString(if (expanded) R.string.fewer_types else R.string.more_types)
         }
         val icon = ImageView(this).apply {
             setImageResource(if (expanded) R.drawable.ic_less else R.drawable.ic_more)
@@ -277,46 +348,37 @@ class CardEditActivity : AppCompatActivity() {
                 (24 * density).toInt(), (24 * density).toInt()
             )
         }
-        val label = TextView(this).apply {
-            text = getString(if (expanded) R.string.fewer_types else R.string.more_types)
-            setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_LabelSmall)
-            gravity = Gravity.CENTER
-        }
         tab.addView(icon)
-        tab.addView(label)
-        styleTab(tab, icon, label, selected = false)
-        tab.contentDescription = label.text
-        tab.setOnClickListener {
-            if (expanded) {
-                // Never strand the user on a hidden tab.
-                if (currentType in nicheTypes) currentType = CardType.URL
-                typesExpanded = false
-            } else {
-                typesExpanded = true
-            }
-            onTypeChanged()
-        }
-        binding.typeTabRow.addView(tab)
+        styleTab(tab, icon, selected = false)
+        tab.setOnClickListener { onMoreLessClicked() }
+        return tab
     }
 
-    private fun styleTab(
-        tab: LinearLayout, icon: ImageView, label: TextView, selected: Boolean,
-    ) {
+    /**
+     * Expanding/collapsing only re-lays the tab rows — the form is untouched,
+     * so typed data survives. Collapsing while a niche type is selected
+     * falls back to Link rather than stranding the selection on a hidden tab
+     * (the niche type's entries stay cached and come back if re-selected).
+     */
+    private fun onMoreLessClicked() {
+        if (typesExpanded) {
+            typesExpanded = false
+            if (currentType in nicheTypes) switchType(CardType.URL) else refreshTypeTabs()
+        } else {
+            typesExpanded = true
+            refreshTypeTabs()
+        }
+    }
+
+    private fun styleTab(tab: LinearLayout, icon: ImageView, selected: Boolean) {
         tab.background = if (selected) getDrawable(R.drawable.tab_selected) else null
         val colorAttr = if (selected) {
             com.google.android.material.R.attr.colorOnPrimaryContainer
         } else {
             com.google.android.material.R.attr.colorOnSurfaceVariant
         }
-        val color = MaterialColors.getColor(this, colorAttr, Color.GRAY)
-        icon.imageTintList = ColorStateList.valueOf(color)
-        label.setTextColor(color)
-    }
-
-    private fun onTypeChanged() {
-        refreshTypeHeader()
-        refreshTypeTabs()
-        buildForm(prefill = null)
+        icon.imageTintList =
+            ColorStateList.valueOf(MaterialColors.getColor(this, colorAttr, Color.GRAY))
     }
 
     // -- dynamic form --
@@ -522,24 +584,33 @@ class CardEditActivity : AppCompatActivity() {
     // -- contact import --
 
     /**
-     * Reads the contact the user picked. The system picker grants us one-time
-     * access to just this contact, so no READ_CONTACTS permission is needed.
-     * Every phone number and email is kept (with its label); the primary one
+     * Reads the contact the user picked. The system picker grants one-time
+     * access to just this contact's URI, so every read goes through URIs
+     * derived from it: querying the global Data table needs READ_CONTACTS
+     * and throws SecurityException without it (which is why imports used to
+     * fail with "Couldn't read that contact" for every contact). Every
+     * phone number and email is kept (with its label); the primary one
      * becomes the selected value.
      */
     private fun importContact(contactUri: Uri) {
         try {
             val cr = contentResolver
-            cr.query(contactUri, null, null, null, null)?.use { c ->
+            val dataUri =
+                Uri.withAppendedPath(contactUri, ContactsContract.Contacts.Data.CONTENT_DIRECTORY)
+            cr.query(
+                contactUri,
+                arrayOf(
+                    ContactsContract.Contacts._ID,
+                    ContactsContract.Contacts.DISPLAY_NAME,
+                ),
+                null, null, null,
+            )?.use { c ->
                 if (!c.moveToFirst()) return
-                val contactId =
-                    c.getString(c.getColumnIndexOrThrow(ContactsContract.Contacts._ID))
-                val displayName =
-                    c.getString(c.getColumnIndexOrThrow(ContactsContract.Contacts.DISPLAY_NAME)).orEmpty()
+                val displayName = c.getString(1).orEmpty()
                 val (firstName, lastName) = splitName(displayName)
 
                 val phones = readContactOptions(
-                    cr, contactId,
+                    cr, dataUri,
                     ContactsContract.CommonDataKinds.Phone.CONTENT_ITEM_TYPE,
                     ContactsContract.CommonDataKinds.Phone.NUMBER,
                     ContactsContract.CommonDataKinds.Phone.TYPE,
@@ -549,7 +620,7 @@ class CardEditActivity : AppCompatActivity() {
                         .toString()
                 }
                 val emails = readContactOptions(
-                    cr, contactId,
+                    cr, dataUri,
                     ContactsContract.CommonDataKinds.Email.CONTENT_ITEM_TYPE,
                     ContactsContract.CommonDataKinds.Email.ADDRESS,
                     ContactsContract.CommonDataKinds.Email.TYPE,
@@ -559,12 +630,12 @@ class CardEditActivity : AppCompatActivity() {
                         .toString()
                 }
                 val organization = readContactSingle(
-                    cr, contactId,
+                    cr, dataUri,
                     ContactsContract.CommonDataKinds.Organization.CONTENT_ITEM_TYPE,
                     ContactsContract.CommonDataKinds.Organization.COMPANY,
                 )
                 val website = readContactSingle(
-                    cr, contactId,
+                    cr, dataUri,
                     ContactsContract.CommonDataKinds.Website.CONTENT_ITEM_TYPE,
                     ContactsContract.CommonDataKinds.Website.URL,
                 )
@@ -577,16 +648,16 @@ class CardEditActivity : AppCompatActivity() {
                     optionLists["email"] = emails.toMutableList()
                     optionSelection["email"] = 0
                 }
-                buildForm(
-                    prefill = mapOf(
-                        "firstName" to firstName,
-                        "lastName" to lastName,
-                        "organization" to organization,
-                        "phone" to phones.firstOrNull()?.value.orEmpty(),
-                        "email" to emails.firstOrNull()?.value.orEmpty(),
-                        "website" to website,
-                    )
+                // Cache under CONTACT so switching types and back keeps the import.
+                typeFieldCache[CardType.CONTACT] = mutableMapOf(
+                    "firstName" to firstName,
+                    "lastName" to lastName,
+                    "organization" to organization,
+                    "phone" to phones.firstOrNull()?.value.orEmpty(),
+                    "email" to emails.firstOrNull()?.value.orEmpty(),
+                    "website" to website,
                 )
+                buildForm(prefillFor(CardType.CONTACT))
             } ?: throw IllegalArgumentException("empty contact cursor")
         } catch (_: Exception) {
             Toast.makeText(this, R.string.contact_import_failed, Toast.LENGTH_SHORT).show()
@@ -595,7 +666,7 @@ class CardEditActivity : AppCompatActivity() {
 
     private fun readContactOptions(
         cr: android.content.ContentResolver,
-        contactId: String,
+        dataUri: Uri,
         mimeType: String,
         valueColumn: String,
         typeColumn: String,
@@ -605,10 +676,10 @@ class CardEditActivity : AppCompatActivity() {
         data class Ranked(val label: String, val value: String, val rank: Int)
         val out = mutableListOf<Ranked>()
         cr.query(
-            ContactsContract.Data.CONTENT_URI,
+            dataUri,
             null,
-            "${ContactsContract.Data.CONTACT_ID}=? AND ${ContactsContract.Data.MIMETYPE}=?",
-            arrayOf(contactId, mimeType),
+            "${ContactsContract.Data.MIMETYPE}=?",
+            arrayOf(mimeType),
             null,
         )?.use { cur ->
             val vIdx = cur.getColumnIndexOrThrow(valueColumn)
@@ -631,15 +702,15 @@ class CardEditActivity : AppCompatActivity() {
 
     private fun readContactSingle(
         cr: android.content.ContentResolver,
-        contactId: String,
+        dataUri: Uri,
         mimeType: String,
         column: String,
     ): String {
         cr.query(
-            ContactsContract.Data.CONTENT_URI,
+            dataUri,
             arrayOf(column),
-            "${ContactsContract.Data.CONTACT_ID}=? AND ${ContactsContract.Data.MIMETYPE}=?",
-            arrayOf(contactId, mimeType),
+            "${ContactsContract.Data.MIMETYPE}=?",
+            arrayOf(mimeType),
             null,
         )?.use { cur ->
             if (cur.moveToFirst()) return cur.getString(0).orEmpty().trim()
@@ -742,18 +813,9 @@ class CardEditActivity : AppCompatActivity() {
     private fun buildColorRow() {
         binding.colorRow.removeAllViews()
         colorDots.clear()
-        val density = resources.displayMetrics.density
-        val size = (40 * density).toInt()
-        val margin = (8 * density).toInt()
-        // Padding shrinks the dot image inside its view so the selection ring
-        // (drawn as the view background) stays visible around it instead of
-        // hiding behind the opaque dot.
-        val pad = (5 * density).toInt()
         colorOptions.forEach { color ->
             val dot = ImageView(this).apply {
-                layoutParams = LinearLayout.LayoutParams(size, size)
-                    .apply { setMargins(margin, 0, margin, 0) }
-                setPadding(pad, pad, pad, pad)
+                // Sized in layoutColorDots() so all seven dots always fit on screen.
                 setImageResource(if (color == null) R.drawable.dot_none else R.drawable.dot)
                 if (color != null) imageTintList = ColorStateList.valueOf(color)
                 contentDescription =
@@ -768,7 +830,27 @@ class CardEditActivity : AppCompatActivity() {
             binding.colorRow.addView(dot)
             colorDots.add(dot)
         }
+        binding.colorRow.post { layoutColorDots() }
         refreshColorSelection()
+    }
+
+    /**
+     * Sizes the dots from the row's measured width so all seven always fit
+     * horizontally, staying round instead of stretching.
+     */
+    private fun layoutColorDots() {
+        val rowWidth = binding.colorRow.width
+        if (rowWidth <= 0 || colorDots.isEmpty()) return
+        val density = resources.displayMetrics.density
+        val margin = (4 * density).toInt()
+        val pad = (5 * density).toInt()
+        val size = (rowWidth / colorDots.size - margin * 2)
+            .coerceAtLeast((24 * density).toInt())
+        colorDots.forEach { dot ->
+            dot.layoutParams = LinearLayout.LayoutParams(size, size)
+                .apply { setMargins(margin, 0, margin, 0) }
+            dot.setPadding(pad, pad, pad, pad)
+        }
     }
 
     private fun refreshColorSelection() {

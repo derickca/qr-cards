@@ -5,11 +5,12 @@
     android:layout_height="match_parent"
     android:orientation="vertical">
 
+    <!-- No back arrow: in some UIs it implies "save". Cancel/Save live at the
+         bottom of the screen instead. -->
     <com.google.android.material.appbar.MaterialToolbar
         android:id="@+id/toolbar"
         android:layout_width="match_parent"
-        android:layout_height="?attr/actionBarSize"
-        app:navigationIcon="@drawable/ic_arrow_back" />
+        android:layout_height="?attr/actionBarSize" />
 
     <ScrollView
         android:layout_width="match_parent"
@@ -22,34 +23,12 @@
             android:orientation="vertical"
             android:padding="16dp">
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/card_name"
-                android:textAppearance="?attr/textAppearanceLabelMedium" />
-
-            <com.google.android.material.textfield.TextInputLayout
-                android:id="@+id/cardNameLayout"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                app:boxBackgroundMode="outline">
-
-                <com.google.android.material.textfield.TextInputEditText
-                    android:id="@+id/cardNameInput"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:hint="@string/card_name_hint"
-                    android:inputType="textCapWords"
-                    android:imeOptions="actionNext" />
-            </com.google.android.material.textfield.TextInputLayout>
-
-            <!-- Card type: icon tabs. The header is a fixed height so the tabs
-                 never jump when the description wraps to two lines. -->
+            <!-- Card type first: title, then the tab buttons. The header is a
+                 fixed height so the tabs never jump when the description wraps
+                 to two lines. -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
                 android:minHeight="64dp"
                 android:orientation="vertical">
 
@@ -68,20 +47,49 @@
                     android:textAppearance="?attr/textAppearanceBodySmall" />
             </LinearLayout>
 
-            <HorizontalScrollView
+            <!-- Icon-only type tabs. Row 1 holds the five everyday types plus
+                 the More/Less expander; row 2 appears only when expanded and
+                 holds the four rarer types. Tabs are weighted so they always
+                 fit the screen with no scrolling and never change size when
+                 the second row opens. -->
+            <LinearLayout
+                android:id="@+id/typeTabRow1"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
-                android:clipToPadding="false"
-                android:fillViewport="true"
-                android:scrollbars="none">
+                android:orientation="horizontal" />
 
-                <LinearLayout
-                    android:id="@+id/typeTabRow"
+            <LinearLayout
+                android:id="@+id/typeTabRow2"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:orientation="horizontal"
+                android:visibility="gone" />
+
+            <!-- Card name, then all the fillable fields together. -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="@string/card_name"
+                android:textAppearance="?attr/textAppearanceLabelMedium" />
+
+            <com.google.android.material.textfield.TextInputLayout
+                android:id="@+id/cardNameLayout"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                app:boxBackgroundMode="outline">
+
+                <com.google.android.material.textfield.TextInputEditText
+                    android:id="@+id/cardNameInput"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="horizontal" />
-            </HorizontalScrollView>
+                    android:hint="@string/card_name_hint"
+                    android:inputType="textCapWords"
+                    android:imeOptions="actionNext" />
+            </com.google.android.material.textfield.TextInputLayout>
 
             <TextView
                 android:layout_width="wrap_content"
@@ -127,13 +135,31 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
                 android:text="@string/sensitive_check" />
-
-            <Button
-                android:id="@+id/saveButton"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="24dp"
-                android:text="@string/save" />
         </LinearLayout>
     </ScrollView>
+
+    <!-- Fixed bottom bar: explicit Cancel/Save, always visible. -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:padding="16dp">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/cancelButton"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="8dp"
+            android:layout_weight="1"
+            android:text="@string/cancel" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/saveButton"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:layout_weight="1"
+            android:text="@string/save" />
+    </LinearLayout>
 </LinearLayout>

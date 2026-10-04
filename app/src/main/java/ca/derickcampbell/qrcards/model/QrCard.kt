@@ -38,7 +38,7 @@ data class QrCard(
 data class FieldOption(
     val label: String,
     val value: String,
-)
+) : java.io.Serializable
 
 enum class CardType {
     URL,

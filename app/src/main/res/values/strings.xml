@@ -80,7 +80,7 @@
     <string name="details">Details</string>
     <string name="label_color">Label color</string>
     <string name="color_none">No color</string>
-    <string name="sensitive_check">Mark as sensitive (confirm before displaying)</string>
+    <string name="sensitive_check">Sensitive (confirm before display)</string>
     <string name="save">Save</string>
     <string name="name_required">Give the card a name</string>
     <string name="card_saved">Card saved</string>
