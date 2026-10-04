@@ -467,7 +467,7 @@ class CardEditActivity : AppCompatActivity() {
         }
         til.addView(edit)
         if ((optionLists[key]?.size ?: 0) > 1) {
-            til.endIconMode = TextInputLayout.END_ICON_DROPDOWN
+            til.endIconMode = TextInputLayout.END_ICON_DROPDOWN_MENU
             til.setEndIconOnClickListener { showOptionPicker(key, label) }
         }
         binding.formContainer.addView(til)
