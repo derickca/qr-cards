@@ -29,12 +29,14 @@ android {
         // binary files can't ride the text-only file pipeline; Gradle decodes
         // it into build/ at configuration time.
         getByName("debug") {
-            val decoded = layout.buildDirectory.file("ci-debug.keystore").get().asFile
+            // Note: project./project.layout are qualified explicitly — bare
+            // layout/rootProject don't resolve inside this nested DSL block.
+            val decoded = project.layout.buildDirectory.file("ci-debug.keystore").get().asFile
                 .apply {
                     parentFile.mkdirs()
                     writeBytes(
                         java.util.Base64.getMimeDecoder().decode(
-                            rootProject.file("debug.keystore.b64").readText()
+                            project.rootProject.file("debug.keystore.b64").readText()
                         )
                     )
                 }
