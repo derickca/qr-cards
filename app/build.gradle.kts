@@ -1,3 +1,5 @@
+import java.util.Base64
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -17,6 +19,33 @@ android {
         // -PversionName=0.0.3 -PversionCode=42. Defaults are the fallback.
         versionCode = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 2
         versionName = project.findProperty("versionName") as String? ?: "0.0.2"
+    }
+
+    signingConfigs {
+        // Stable debug key for CI: every CI build signs with this keystore, so
+        // updates install cleanly over each other. Debug credentials are the
+        // public android/android pair (same as every dev machine's) — safe to
+        // commit. The Play Store upload key is a different, secret key.
+        //
+        // The keystore is stored base64-encoded (debug.keystore.b64) because
+        // binary files can't ride the text-only file pipeline; Gradle decodes
+        // it into build/ at configuration time.
+        getByName("debug") {
+            val decoded = project.layout.buildDirectory.file("ci-debug.keystore").get().asFile
+                .apply {
+                    parentFile.mkdirs()
+                    writeBytes(
+                        Base64.getMimeDecoder().decode(
+                            project.rootProject.file("debug.keystore.b64").readText()
+                        )
+                    )
+                }
+            storeFile = decoded
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+            storeType = "PKCS12"
+        }
     }
 
     buildTypes {
