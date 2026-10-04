@@ -13,8 +13,10 @@ android {
         applicationId = "ca.derickcampbell.qrcards"
         minSdk = 26
         targetSdk = 34
-        versionCode = 2
-        versionName = "0.0.2"
+        // CI can override these per release: gradle assembleDebug
+        // -PversionName=0.0.3 -PversionCode=42. Defaults are the fallback.
+        versionCode = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 2
+        versionName = project.findProperty("versionName") as String? ?: "0.0.2"
     }
 
     signingConfigs {
