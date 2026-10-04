@@ -6,8 +6,11 @@
 
     <!-- Requested at runtime only, when the feature is used: READ_CONTACTS
          when contact import's picker grant doesn't cover the data rows;
-         ACCESS_FINE_LOCATION when "Current location" is tapped. -->
+         location permissions when "Current location" is tapped. Android 12+
+         requires COARSE alongside FINE (lint CoarseFineLocation); both are
+         requested together and either grant is enough to proceed. -->
     <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
 
     <application

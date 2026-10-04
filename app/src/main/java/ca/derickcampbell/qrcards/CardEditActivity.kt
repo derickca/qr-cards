@@ -154,7 +154,9 @@ class CardEditActivity : AppCompatActivity() {
     // button is tapped; the app is otherwise fully permission-free.
     private var locationListener: android.location.LocationListener? = null
     private val requestLocationPermission =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
+            val granted = grants[android.Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+                    grants[android.Manifest.permission.ACCESS_COARSE_LOCATION] == true
             if (granted) fetchCurrentLocation()
             else Toast.makeText(this, R.string.location_permission_needed, Toast.LENGTH_SHORT).show()
         }
@@ -507,12 +509,20 @@ class CardEditActivity : AppCompatActivity() {
     }
 
     private fun onCurrentLocationClicked() {
-        if (checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) ==
-            android.content.pm.PackageManager.PERMISSION_GRANTED
-        ) {
+        val pm = android.content.pm.PackageManager.PERMISSION_GRANTED
+        val hasLocation =
+            checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) == pm ||
+                    checkSelfPermission(android.Manifest.permission.ACCESS_COARSE_LOCATION) == pm
+        if (hasLocation) {
             fetchCurrentLocation()
         } else {
-            requestLocationPermission.launch(android.Manifest.permission.ACCESS_FINE_LOCATION)
+            // Android 12+ wants both requested together; either grant proceeds.
+            requestLocationPermission.launch(
+                arrayOf(
+                    android.Manifest.permission.ACCESS_FINE_LOCATION,
+                    android.Manifest.permission.ACCESS_COARSE_LOCATION,
+                )
+            )
         }
     }
 
@@ -523,9 +533,11 @@ class CardEditActivity : AppCompatActivity() {
      */
     private fun fetchCurrentLocation() {
         val lm = getSystemService(android.location.LocationManager::class.java) ?: return
-        if (checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) !=
-            android.content.pm.PackageManager.PERMISSION_GRANTED
-        ) return
+        val pm = android.content.pm.PackageManager.PERMISSION_GRANTED
+        val hasLocation =
+            checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) == pm ||
+                    checkSelfPermission(android.Manifest.permission.ACCESS_COARSE_LOCATION) == pm
+        if (!hasLocation) return
         val providers = listOf(
             android.location.LocationManager.GPS_PROVIDER,
             android.location.LocationManager.NETWORK_PROVIDER,
