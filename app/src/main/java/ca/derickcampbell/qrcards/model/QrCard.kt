@@ -21,9 +21,23 @@ data class QrCard(
      * rendering.
      */
     val fields: Map<String, String> = emptyMap(),
+    /**
+     * Every known value for a field, not just the selected one. Used by the
+     * contact editor: a contact often has several phone numbers or emails, so
+     * all of them are kept (with labels) and the user can switch the active
+     * one any time. The QR payload only ever carries the selected value from
+     * [fields]. Empty for cards created before this existed.
+     */
+    val fieldOptions: Map<String, List<FieldOption>> = emptyMap(),
     val labelColor: Int? = null,
     /** When true, the app confirms before displaying the code. */
     val sensitive: Boolean = false,
+)
+
+/** One labelled value among several options for a field. */
+data class FieldOption(
+    val label: String,
+    val value: String,
 )
 
 enum class CardType {

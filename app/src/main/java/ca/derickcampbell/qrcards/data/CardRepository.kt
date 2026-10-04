@@ -2,6 +2,7 @@ package ca.derickcampbell.qrcards.data
 
 import android.content.Context
 import ca.derickcampbell.qrcards.model.CardType
+import ca.derickcampbell.qrcards.model.FieldOption
 import ca.derickcampbell.qrcards.model.QrCard
 import org.json.JSONArray
 import org.json.JSONObject
@@ -73,6 +74,15 @@ class CardRepository(private val context: Context) {
             .put("type", card.type.name)
             .put("payload", card.payload)
             .put("fields", JSONObject(card.fields))
+            .put("fieldOptions", JSONObject().apply {
+                card.fieldOptions.forEach { (key, options) ->
+                    put(key, JSONArray(options.map {
+                        JSONObject()
+                            .put("label", it.label)
+                            .put("value", it.value)
+                    }))
+                }
+            })
             .put("labelColor", card.labelColor)
             .put("sensitive", card.sensitive)
 
@@ -80,12 +90,25 @@ class CardRepository(private val context: Context) {
         val fieldsObj = o.optJSONObject("fields") ?: JSONObject()
         val fields = mutableMapOf<String, String>()
         fieldsObj.keys().forEach { k -> fields[k] = fieldsObj.optString(k) }
+        val fieldOptions = mutableMapOf<String, List<FieldOption>>()
+        val optionsObj = o.optJSONObject("fieldOptions")
+        optionsObj?.keys()?.forEach { k ->
+            val arr = optionsObj.optJSONArray(k) ?: JSONArray()
+            fieldOptions[k] = List(arr.length()) { i ->
+                val item = arr.optJSONObject(i) ?: JSONObject()
+                FieldOption(
+                    label = item.optString("label"),
+                    value = item.optString("value"),
+                )
+            }
+        }
         return QrCard(
             id = o.getString("id"),
             name = o.getString("name"),
             type = CardType.valueOf(o.getString("type")),
             payload = o.getString("payload"),
             fields = fields,
+            fieldOptions = fieldOptions,
             labelColor = if (o.isNull("labelColor")) null else o.getInt("labelColor"),
             sensitive = o.optBoolean("sensitive", false),
         )

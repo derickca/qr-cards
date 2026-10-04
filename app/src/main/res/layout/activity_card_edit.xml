@@ -44,26 +44,44 @@
                     android:imeOptions="actionNext" />
             </com.google.android.material.textfield.TextInputLayout>
 
-            <TextView
-                android:layout_width="wrap_content"
+            <!-- Card type: icon tabs. The header is a fixed height so the tabs
+                 never jump when the description wraps to two lines. -->
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="16dp"
-                android:text="@string/card_type"
-                android:textAppearance="?attr/textAppearanceLabelMedium" />
+                android:minHeight="64dp"
+                android:orientation="vertical">
 
-            <com.google.android.material.textfield.TextInputLayout
+                <TextView
+                    android:id="@+id/typeTitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:singleLine="true"
+                    android:textAppearance="?attr/textAppearanceHeadlineSmall" />
+
+                <TextView
+                    android:id="@+id/typeDesc"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:lines="2"
+                    android:textAppearance="?attr/textAppearanceBodySmall" />
+            </LinearLayout>
+
+            <HorizontalScrollView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
-                app:boxBackgroundMode="outline"
-                style="@style/Widget.Material3.TextInputLayout.OutlinedBox.ExposedDropdownMenu">
+                android:clipToPadding="false"
+                android:fillViewport="true"
+                android:scrollbars="none">
 
-                <AutoCompleteTextView
-                    android:id="@+id/typeInput"
+                <LinearLayout
+                    android:id="@+id/typeTabRow"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:inputType="none" />
-            </com.google.android.material.textfield.TextInputLayout>
+                    android:orientation="horizontal" />
+            </HorizontalScrollView>
 
             <TextView
                 android:layout_width="wrap_content"

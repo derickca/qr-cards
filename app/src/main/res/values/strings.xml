@@ -37,6 +37,21 @@
     <string name="type_sms">Text message</string>
     <string name="type_calendar_event">Event</string>
 
+    <!-- Card type descriptions (kept to a few words) -->
+    <string name="type_desc_url">Opens a web page.</string>
+    <string name="type_desc_contact">A card people can save.</string>
+    <string name="type_desc_wifi">Joins a Wi-Fi network.</string>
+    <string name="type_desc_location">Opens a map pin.</string>
+    <string name="type_desc_text">Plain text to copy.</string>
+    <string name="type_desc_email">Starts a new email.</string>
+    <string name="type_desc_phone">Dials a phone number.</string>
+    <string name="type_desc_sms">Starts a text message.</string>
+    <string name="type_desc_calendar_event">Adds a calendar event.</string>
+    <string name="more_types">More</string>
+    <string name="fewer_types">Less</string>
+    <string name="import_from_contacts">Import from contacts</string>
+    <string name="contact_import_failed">Couldn\'t read that contact</string>
+
     <!-- Detail / present mode -->
     <string name="share_png">Share PNG</string>
     <string name="export_svg">Export SVG</string>
