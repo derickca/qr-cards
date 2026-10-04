@@ -19,35 +19,6 @@ android {
         versionName = project.findProperty("versionName") as String? ?: "0.0.2"
     }
 
-    signingConfigs {
-        // Stable debug key for CI: every CI build signs with this keystore, so
-        // updates install cleanly over each other. Debug credentials are the
-        // public android/android pair (same as every dev machine's) — safe to
-        // commit. The Play Store upload key is a different, secret key.
-        //
-        // The keystore is stored base64-encoded (debug.keystore.b64) because
-        // binary files can't ride the text-only file pipeline; Gradle decodes
-        // it into build/ at configuration time.
-        getByName("debug") {
-            // Note: project./project.layout are qualified explicitly — bare
-            // layout/rootProject don't resolve inside this nested DSL block.
-            val decoded = project.layout.buildDirectory.file("ci-debug.keystore").get().asFile
-                .apply {
-                    parentFile.mkdirs()
-                    writeBytes(
-                        java.util.Base64.getMimeDecoder().decode(
-                            project.rootProject.file("debug.keystore.b64").readText()
-                        )
-                    )
-                }
-            storeFile = decoded
-            storePassword = "android"
-            keyAlias = "androiddebugkey"
-            keyPassword = "android"
-            storeType = "PKCS12"
-        }
-    }
-
     buildTypes {
         release {
             isMinifyEnabled = true
