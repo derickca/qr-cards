@@ -535,7 +535,7 @@ class CardEditActivity : AppCompatActivity() {
                 val contactId =
                     c.getString(c.getColumnIndexOrThrow(ContactsContract.Contacts._ID))
                 val displayName =
-                    c.getString(c.getColumnIndex(ContactsContract.Contacts.DISPLAY_NAME)).orEmpty()
+                    c.getString(c.getColumnIndexOrThrow(ContactsContract.Contacts.DISPLAY_NAME)).orEmpty()
                 val (firstName, lastName) = splitName(displayName)
 
                 val phones = readContactOptions(
@@ -611,7 +611,7 @@ class CardEditActivity : AppCompatActivity() {
             arrayOf(contactId, mimeType),
             null,
         )?.use { cur ->
-            val vIdx = cur.getColumnIndex(valueColumn)
+            val vIdx = cur.getColumnIndexOrThrow(valueColumn)
             val tIdx = cur.getColumnIndex(typeColumn)
             val lIdx = cur.getColumnIndex(labelColumn)
             val spIdx = cur.getColumnIndex(ContactsContract.Data.IS_SUPER_PRIMARY)
