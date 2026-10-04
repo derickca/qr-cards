@@ -76,6 +76,15 @@
     <string name="edit_card">Edit card</string>
     <string name="card_name">Card name</string>
     <string name="card_name_hint">e.g. Work contact</string>
+    <string name="card_name_hint_url">e.g. My website</string>
+    <string name="card_name_hint_contact">e.g. Work contact</string>
+    <string name="card_name_hint_wifi">e.g. Home Wi-Fi</string>
+    <string name="card_name_hint_location">e.g. Favorite campsite</string>
+    <string name="card_name_hint_text">e.g. Parking reminder</string>
+    <string name="card_name_hint_email">e.g. Support email</string>
+    <string name="card_name_hint_phone">e.g. Office line</string>
+    <string name="card_name_hint_sms">e.g. Text reminders</string>
+    <string name="card_name_hint_event">e.g. Dentist appointment</string>
     <string name="card_type">Card type</string>
     <string name="details">Details</string>
     <string name="label_color">Label color</string>
@@ -105,6 +114,10 @@
     <string name="wifi_plaintext_note">The password is baked into the QR code as plain text — anyone who scans it can read it. Use a guest network, never your main LAN password.</string>
     <string name="field_latitude">Latitude</string>
     <string name="field_longitude">Longitude</string>
+    <string name="use_current_location">Current location</string>
+    <string name="locating">Getting your location…</string>
+    <string name="location_unavailable">Couldn\'t get your location</string>
+    <string name="location_permission_needed">Location permission is needed for this</string>
     <string name="field_text">Text</string>
     <string name="field_email_address">Email address</string>
     <string name="field_subject">Subject</string>

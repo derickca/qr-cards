@@ -47,18 +47,49 @@
                     android:textAppearance="?attr/textAppearanceBodySmall" />
             </LinearLayout>
 
-            <!-- Icon-only type tabs, always a single row: the five everyday
-                 types plus the More/Less expander, with the rarer four
-                 appended in place when expanded. Every tab shares one fixed
-                 size and margin, so nothing moves or resizes when More/Less
-                 is pressed. -->
+            <!-- One horizontally scrolling row of type tabs. The strip holds
+                 all nine tabs at 1/6 of the row width each; the arrow button
+                 is fixed at the right, always snug against the strip, and
+                 slides it to the niche types and back. Tabs never resize or
+                 rebuild — the strip just scrolls. -->
             <LinearLayout
-                android:id="@+id/typeTabRow1"
+                android:id="@+id/typeTabRowOuter"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
-                android:gravity="center_horizontal"
-                android:orientation="horizontal" />
+                android:orientation="horizontal">
+
+                <HorizontalScrollView
+                    android:id="@+id/typeTabStrip"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:scrollbars="none">
+
+                    <LinearLayout
+                        android:id="@+id/typeTabRow"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal" />
+                </HorizontalScrollView>
+
+                <LinearLayout
+                    android:id="@+id/typeMoreButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:minHeight="64dp"
+                    android:gravity="center"
+                    android:orientation="vertical"
+                    android:clickable="true"
+                    android:focusable="true">
+
+                    <ImageView
+                        android:id="@+id/typeMoreIcon"
+                        android:layout_width="30dp"
+                        android:layout_height="30dp"
+                        android:contentDescription="@string/more_types" />
+                </LinearLayout>
+            </LinearLayout>
 
             <!-- Card name, then all the fillable fields together. -->
             <TextView

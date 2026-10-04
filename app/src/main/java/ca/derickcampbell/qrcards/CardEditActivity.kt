@@ -48,14 +48,13 @@ import java.time.format.DateTimeFormatter
  * no back arrow (in some UIs it implies "save"); explicit Cancel and Save
  * buttons are pinned to the bottom of the screen.
  *
- * The five everyday types are always visible and the rarer four (note,
- * email, phone, text message) sit behind a "More" tab that appends them to
- * the same row in place. On wide screens (tablets, landscape) all nine tabs
- * are shown with no "More" needed. Tabs are icon-only (the header names the
- * selected type, so tapping one identifies it immediately) and share a
- * single fixed size with fixed margins, so the row never jumps, resizes, or
- * scrolls when More/Less is pressed. A fixed-height header names the
- * selected type so the tabs never jump around.
+ * The strip holds all nine type tabs and scrolls horizontally; a thick
+ * arrow button fixed at the right — always snug against the strip — slides
+ * it to the rarer types (note, email, phone, text message) and back. Tabs
+ * are icon-only (the header names the selected type, so tapping one
+ * identifies it immediately) and share one fixed size, so nothing jumps or
+ * rebuilds when the strip scrolls. A fixed-height header names the selected
+ * type so the tabs never jump around.
  *
  * Everything the user types is stashed per card type before switching, so
  * moving between types — or rotating the phone — never loses data, and
@@ -80,8 +79,8 @@ class CardEditActivity : AppCompatActivity() {
 
     companion object {
         const val EXTRA_CARD_ID = "card_id"
-        /** Tabs are sized for ten slots so every tab is identical in both states. */
-        private const val TAB_SLOTS = 10
+        /** Six across: five type tabs beside the fixed arrow button. */
+        private const val TAB_SLOTS = 6
     }
 
     private lateinit var binding: ActivityCardEditBinding
@@ -89,15 +88,10 @@ class CardEditActivity : AppCompatActivity() {
     private var editingCard: QrCard? = null
     private var currentType: CardType = CardType.URL
 
-    // Card-type tabs.
-    private val primaryTypes = listOf(
-        CardType.URL, CardType.CONTACT, CardType.WIFI,
-        CardType.LOCATION, CardType.CALENDAR_EVENT,
-    )
-    private val nicheTypes = listOf(
-        CardType.TEXT, CardType.EMAIL, CardType.PHONE, CardType.SMS,
-    )
-    private var typesExpanded = false
+    // Card-type tabs: one scrolling strip. tabSlotPx is measured after
+    // layout; pendingTabScrollX restores the strip position on rotation.
+    private var tabSlotPx = 0
+    private var pendingTabScrollX = -1
 
     // Everything the user typed, kept per card type so switching types (or
     // rotating) never loses data. collectFields() already captures text
@@ -141,8 +135,42 @@ class CardEditActivity : AppCompatActivity() {
             }
         }
 
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
+    // The system picker grants one-time access to the picked contact, which
+    // is enough on most devices — but when the grant doesn't cover the
+    // contact's data rows, fall back to asking for the contacts permission
+    // once and retry. The app stays permission-free until Import is used.
+    private var pendingContactUri: Uri? = null
+    private val requestContactsPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            val uri = pendingContactUri
+            pendingContactUri = null
+            if (granted && uri != null) importContact(uri)
+            else if (!granted) {
+                Toast.makeText(this, R.string.contact_import_failed, Toast.LENGTH_SHORT).show()
+            }
+        }
+
+    // Current-location lookup asks for the location permission only when the
+    // button is tapped; the app is otherwise fully permission-free.
+    private var locationListener: android.location.LocationListener? = null
+    private val requestLocationPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) fetchCurrentLocation()
+            else Toast.makeText(this, R.string.location_permission_needed, Toast.LENGTH_SHORT).show()
+        }
+
+    override fun onDestroy() {
+        locationListener?.let { listener ->
+            runCatching {
+                getSystemService(android.location.LocationManager::class.java)
+                    ?.removeUpdates(listener)
+            }
+            locationListener = null
+        }
+        super.onDestroy()
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {        super.onCreate(savedInstanceState)
         binding = ActivityCardEditBinding.inflate(layoutInflater)
         setContentView(binding.root)
         repository = CardRepository(this)
@@ -164,7 +192,6 @@ class CardEditActivity : AppCompatActivity() {
             restoreState(savedInstanceState)
         } else {
             currentType = card?.type ?: CardType.URL
-            typesExpanded = false
             card?.fieldOptions?.forEach { (key, options) ->
                 optionLists[key] = options.toMutableList()
             }
@@ -174,9 +201,9 @@ class CardEditActivity : AppCompatActivity() {
         }
 
         refreshTypeHeader()
-        refreshTypeTabs()
-        // Re-measure once laid out: tablets and landscape get all nine tabs.
-        binding.typeTabRow1.post { refreshTypeTabs() }
+        buildTypeTabs()
+        binding.typeMoreButton.setOnClickListener { onArrowClicked() }
+        binding.typeTabStrip.setOnScrollChangeListener { _, _, _, _, _ -> syncArrowIcon() }
 
         buildForm(prefillFor(currentType))
         buildColorRow()
@@ -190,7 +217,7 @@ class CardEditActivity : AppCompatActivity() {
     override fun onSaveInstanceState(outState: Bundle) {
         stashForm()
         outState.putString("currentType", currentType.name)
-        outState.putBoolean("typesExpanded", typesExpanded)
+        outState.putInt("tabScrollX", binding.typeTabStrip.scrollX)
         if (selectedColor != null) outState.putInt("selectedColor", selectedColor!!)
         outState.putString("cardName", binding.cardNameInput.text?.toString().orEmpty())
         outState.putBoolean("sensitive", binding.sensitiveCheck.isChecked)
@@ -209,7 +236,7 @@ class CardEditActivity : AppCompatActivity() {
     private fun restoreState(state: Bundle) {
         currentType = runCatching { CardType.valueOf(state.getString("currentType")!!) }
             .getOrDefault(CardType.URL)
-        typesExpanded = state.getBoolean("typesExpanded")
+        pendingTabScrollX = state.getInt("tabScrollX", -1)
         selectedColor = if (state.containsKey("selectedColor")) state.getInt("selectedColor") else null
         binding.cardNameInput.setText(state.getString("cardName").orEmpty())
         binding.sensitiveCheck.isChecked = state.getBoolean("sensitive")
@@ -240,10 +267,32 @@ class CardEditActivity : AppCompatActivity() {
     private fun switchType(newType: CardType) {
         if (newType == currentType) return
         stashForm()
+        carrySharedFields(currentType, newType)
         currentType = newType
         refreshTypeHeader()
         refreshTypeTabs()
         buildForm(prefillFor(newType))
+    }
+
+    /**
+     * The web address is the same idea on links and contacts: when switching
+     * between them, carry it over — but only into a blank field, so a value
+     * the user typed deliberately is never clobbered.
+     */
+    private fun carrySharedFields(from: CardType, to: CardType) {
+        val fromCache = typeFieldCache[from] ?: return
+        val toCache = typeFieldCache.getOrPut(to) { mutableMapOf() }
+        if (from == CardType.URL && to == CardType.CONTACT) {
+            val url = fromCache["url"].orEmpty()
+            if (url.isNotBlank() && toCache["website"].isNullOrBlank()) {
+                toCache["website"] = url
+            }
+        } else if (from == CardType.CONTACT && to == CardType.URL) {
+            val site = fromCache["website"].orEmpty()
+            if (site.isNotBlank() && toCache["url"].isNullOrBlank()) {
+                toCache["url"] = site
+            }
+        }
     }
 
     // -- card-type tabs --
@@ -265,6 +314,19 @@ class CardEditActivity : AppCompatActivity() {
         CardType.CALENDAR_EVENT -> getString(R.string.type_desc_calendar_event)
     }
 
+    /** Example card name, updated whenever the type changes. */
+    private fun cardNameHint(type: CardType): String = when (type) {
+        CardType.URL -> getString(R.string.card_name_hint_url)
+        CardType.CONTACT -> getString(R.string.card_name_hint_contact)
+        CardType.WIFI -> getString(R.string.card_name_hint_wifi)
+        CardType.LOCATION -> getString(R.string.card_name_hint_location)
+        CardType.TEXT -> getString(R.string.card_name_hint_text)
+        CardType.EMAIL -> getString(R.string.card_name_hint_email)
+        CardType.PHONE -> getString(R.string.card_name_hint_phone)
+        CardType.SMS -> getString(R.string.card_name_hint_sms)
+        CardType.CALENDAR_EVENT -> getString(R.string.card_name_hint_event)
+    }
+
     private fun typeIcon(type: CardType): Int = when (type) {
         CardType.URL -> R.drawable.ic_type_link
         CardType.CONTACT -> R.drawable.ic_type_contact
@@ -278,60 +340,44 @@ class CardEditActivity : AppCompatActivity() {
     }
 
     /**
-     * One row, always. Every tab shares a single fixed size and fixed
-     * margins — derived from the measured row width and capped — so nothing
-     * moves, resizes, or scrolls when More/Less is pressed. Wide screens
-     * (tablets, landscape) fit all nine tabs with no "More" needed.
+     * One horizontally scrolling row, always. The strip holds all nine tabs
+     * at 1/6 of the row width each; the arrow button is fixed at the right,
+     * snug against the strip, and slides it to the niche types and back.
+     * Tabs never resize or rebuild when the arrow is pressed — the strip
+     * just scrolls.
      */
-    private fun refreshTypeTabs() {
-        val row = binding.typeTabRow1
+    private fun buildTypeTabs() {
+        val row = binding.typeTabRow
         row.removeAllViews()
-        val density = resources.displayMetrics.density
-        val measured = row.width
-        // Ten slots keeps every tab identical in both states; the cap keeps
-        // tablets from growing dinner-plate tabs. Falls back until the first
-        // layout pass measures the row (re-run via post in onCreate).
-        val tabSize = if (measured > 0) {
-            (measured / TAB_SLOTS - 2 * (2 * density).toInt())
-                .coerceAtMost((64 * density).toInt())
-        } else {
-            (40 * density).toInt()
-        }
-        val wide = measured >= (9 * 56 * density).toInt()
-        if (wide) {
-            CardType.values().forEach { row.addView(makeTypeTab(it, tabSize)) }
-        } else {
-            primaryTypes.forEach { row.addView(makeTypeTab(it, tabSize)) }
-            row.addView(makeMoreLessTab(tabSize))
-            if (typesExpanded || currentType in nicheTypes) {
-                typesExpanded = true
-                nicheTypes.forEach { row.addView(makeTypeTab(it, tabSize)) }
-            }
-        }
+        CardType.values().forEach { row.addView(makeTypeTab(it)) }
+        // Size once the outer row is measured (re-run after layout).
+        binding.typeTabRowOuter.post { sizeTabs() }
     }
 
     /**
      * One icon-only type tab. No label: the header above names the selected
      * type, so tapping a tab identifies it immediately.
      */
-    private fun makeTypeTab(type: CardType, tabSize: Int): LinearLayout {
+    private fun makeTypeTab(type: CardType): LinearLayout {
         val density = resources.displayMetrics.density
         val tab = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            minimumHeight = (48 * density).toInt()
+            minimumHeight = (64 * density).toInt()
             val margin = (2 * density).toInt()
             layoutParams = LinearLayout.LayoutParams(
-                tabSize, LinearLayout.LayoutParams.WRAP_CONTENT
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply { setMargins(margin, 0, margin, 0) }
             isClickable = true
             isFocusable = true
+            tag = type
             contentDescription = typeLabel(type, this@CardEditActivity)
         }
         val icon = ImageView(this).apply {
             setImageResource(typeIcon(type))
             layoutParams = LinearLayout.LayoutParams(
-                (24 * density).toInt(), (24 * density).toInt()
+                (30 * density).toInt(), (30 * density).toInt()
             )
         }
         tab.addView(icon)
@@ -340,48 +386,95 @@ class CardEditActivity : AppCompatActivity() {
         return tab
     }
 
-    private fun makeMoreLessTab(tabSize: Int): LinearLayout {
-        val density = resources.displayMetrics.density
-        val expanded = typesExpanded
-        val tab = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            minimumHeight = (48 * density).toInt()
-            val margin = (2 * density).toInt()
-            layoutParams = LinearLayout.LayoutParams(
-                tabSize, LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { setMargins(margin, 0, margin, 0) }
-            isClickable = true
-            isFocusable = true
-            contentDescription =
-                getString(if (expanded) R.string.fewer_types else R.string.more_types)
+    /** Re-styles the tabs for the new selection without rebuilding them. */
+    private fun refreshTypeTabs() {
+        val row = binding.typeTabRow
+        for (i in 0 until row.childCount) {
+            val tab = row.getChildAt(i) as LinearLayout
+            val icon = tab.getChildAt(0) as ImageView
+            styleTab(tab, icon, selected = tab.tag == currentType)
         }
-        val icon = ImageView(this).apply {
-            setImageResource(if (expanded) R.drawable.ic_less else R.drawable.ic_more)
-            layoutParams = LinearLayout.LayoutParams(
-                (24 * density).toInt(), (24 * density).toInt()
-            )
-        }
-        tab.addView(icon)
-        styleTab(tab, icon, selected = false)
-        tab.setOnClickListener { onMoreLessClicked() }
-        return tab
     }
 
     /**
-     * Expanding/collapsing only re-lays the tab rows — the form is untouched,
-     * so typed data survives. Collapsing while a niche type is selected
-     * falls back to Link rather than stranding the selection on a hidden tab
-     * (the niche type's entries stay cached and come back if re-selected).
+     * Sizes every tab to 1/6 of the row (six across: five tabs beside the
+     * fixed arrow) and puts the selected type in view. Called after layout.
      */
-    private fun onMoreLessClicked() {
-        if (typesExpanded) {
-            typesExpanded = false
-            if (currentType in nicheTypes) switchType(CardType.URL) else refreshTypeTabs()
-        } else {
-            typesExpanded = true
-            refreshTypeTabs()
+    private fun sizeTabs() {
+        val outer = binding.typeTabRowOuter
+        val row = binding.typeTabRow
+        val density = resources.displayMetrics.density
+        val measured = outer.width
+        if (measured == 0) {
+            outer.post { sizeTabs() }
+            return
         }
+        if (row.childCount == 0) return
+        val margin = (2 * density).toInt()
+        val tabSize = measured / TAB_SLOTS - 2 * margin
+        for (i in 0 until row.childCount) {
+            val tab = row.getChildAt(i)
+            (tab.layoutParams as LinearLayout.LayoutParams).width = tabSize
+            tab.requestLayout()
+        }
+        val arrow = binding.typeMoreButton
+        (arrow.layoutParams as LinearLayout.LayoutParams).width = tabSize + 2 * margin
+        arrow.requestLayout()
+        binding.typeMoreIcon.imageTintList = ColorStateList.valueOf(
+            MaterialColors.getColor(
+                this,
+                com.google.android.material.R.attr.colorOnSurfaceVariant,
+                Color.GRAY,
+            )
+        )
+        tabSlotPx = tabSize + 2 * margin
+        val restored = pendingTabScrollX
+        pendingTabScrollX = -1
+        if (restored >= 0) {
+            binding.typeTabStrip.scrollTo(restored.coerceAtMost(maxScrollX()), 0)
+        } else {
+            scrollToType(currentType, smooth = false)
+        }
+        syncArrowIcon()
+    }
+
+    /** Slides the strip so the given type is visible. */
+    private fun scrollToType(type: CardType, smooth: Boolean) {
+        if (tabSlotPx == 0) return
+        val index = CardType.values().indexOf(type)
+        // Five tabs fit beside the arrow; niche types live at the far end.
+        val target = if (index >= TAB_SLOTS - 1) maxScrollX() else 0
+        val strip = binding.typeTabStrip
+        if (smooth) strip.smoothScrollTo(target, 0) else strip.scrollTo(target, 0)
+    }
+
+    private fun maxScrollX(): Int {
+        // Analytic: nine tabs, five visible beside the arrow. (Measured
+        // widths aren't re-laid-out yet when sizeTabs() runs.)
+        if (tabSlotPx > 0) return (CardType.values().size - (TAB_SLOTS - 1)) * tabSlotPx
+        val strip = binding.typeTabStrip
+        return (binding.typeTabRow.width - strip.width).coerceAtLeast(0)
+    }
+
+    /** The arrow slides the strip: right for more types, left to go back. */
+    private fun onArrowClicked() {
+        val strip = binding.typeTabStrip
+        val maxScroll = maxScrollX()
+        val slop = (4 * resources.displayMetrics.density).toInt()
+        if (strip.scrollX >= maxScroll - slop) strip.smoothScrollTo(0, 0)
+        else strip.smoothScrollTo(maxScroll, 0)
+    }
+
+    /** Arrow points toward the hidden tabs: right until the end, then left. */
+    private fun syncArrowIcon() {
+        val strip = binding.typeTabStrip
+        val slop = (4 * resources.displayMetrics.density).toInt()
+        val atEnd = strip.scrollX >= maxScrollX() - slop
+        binding.typeMoreIcon.setImageResource(
+            if (atEnd) R.drawable.ic_arrow_left else R.drawable.ic_arrow_right
+        )
+        binding.typeMoreButton.contentDescription =
+            getString(if (atEnd) R.string.fewer_types else R.string.more_types)
     }
 
     private fun styleTab(tab: LinearLayout, icon: ImageView, selected: Boolean) {
@@ -395,6 +488,106 @@ class CardEditActivity : AppCompatActivity() {
             ColorStateList.valueOf(MaterialColors.getColor(this, colorAttr, Color.GRAY))
     }
 
+    // -- location --
+
+    /** "Current location" button above the latitude/longitude fields. */
+    private fun addLocationButton() {
+        val density = resources.displayMetrics.density
+        MaterialButton(
+            this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle
+        ).apply {
+            text = getString(R.string.use_current_location)
+            setIconResource(R.drawable.ic_type_location)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = (8 * density).toInt() }
+            setOnClickListener { onCurrentLocationClicked() }
+        }.also { binding.formContainer.addView(it) }
+    }
+
+    private fun onCurrentLocationClicked() {
+        if (checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            fetchCurrentLocation()
+        } else {
+            requestLocationPermission.launch(android.Manifest.permission.ACCESS_FINE_LOCATION)
+        }
+    }
+
+    /**
+     * Fills latitude/longitude from GPS. Prefers a fix from the last two
+     * minutes; otherwise takes one fresh reading, with a 15-second timeout
+     * that falls back to any last-known fix.
+     */
+    private fun fetchCurrentLocation() {
+        val lm = getSystemService(android.location.LocationManager::class.java) ?: return
+        if (checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) return
+        val providers = listOf(
+            android.location.LocationManager.GPS_PROVIDER,
+            android.location.LocationManager.NETWORK_PROVIDER,
+        ).filter { p -> runCatching { lm.isProviderEnabled(p) }.getOrDefault(false) }
+        fun lastKnown(): android.location.Location? = providers
+            .mapNotNull { p -> runCatching { lm.getLastKnownLocation(p) }.getOrNull() }
+            .maxByOrNull { it.time }
+        val recent = lastKnown()
+        if (recent != null && System.currentTimeMillis() - recent.time < 120_000) {
+            applyLocation(recent.latitude, recent.longitude)
+            return
+        }
+        val provider = providers.firstOrNull()
+        if (provider == null) {
+            Toast.makeText(this, R.string.location_unavailable, Toast.LENGTH_SHORT).show()
+            return
+        }
+        Toast.makeText(this, R.string.locating, Toast.LENGTH_SHORT).show()
+        var done = false
+        val listener = object : android.location.LocationListener {
+            override fun onLocationChanged(location: android.location.Location) {
+                if (done) return
+                done = true
+                runCatching { lm.removeUpdates(this) }
+                locationListener = null
+                applyLocation(location.latitude, location.longitude)
+            }
+            override fun onProviderEnabled(provider: String) {}
+            override fun onProviderDisabled(provider: String) {}
+            @Deprecated("Deprecated in Java")
+            override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
+        }
+        locationListener = listener
+        val requested = runCatching {
+            lm.requestSingleUpdate(provider, listener, android.os.Looper.getMainLooper())
+        }.isSuccess
+        if (!requested) {
+            locationListener = null
+            Toast.makeText(this, R.string.location_unavailable, Toast.LENGTH_SHORT).show()
+            return
+        }
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            if (!done) {
+                done = true
+                runCatching { lm.removeUpdates(listener) }
+                locationListener = null
+                val fallback = lastKnown()
+                if (fallback != null) applyLocation(fallback.latitude, fallback.longitude)
+                else Toast.makeText(this, R.string.location_unavailable, Toast.LENGTH_SHORT).show()
+            }
+        }, 15_000)
+    }
+
+    private fun applyLocation(latitude: Double, longitude: Double) {
+        // US locale: some locales use a comma as the decimal separator.
+        fieldLayouts["latitude"]?.editText
+            ?.setText(String.format(java.util.Locale.US, "%.6f", latitude))
+        fieldLayouts["longitude"]?.editText
+            ?.setText(String.format(java.util.Locale.US, "%.6f", longitude))
+        formDirty = true
+    }
+
     // -- dynamic form --
 
     private fun buildForm(prefill: Map<String, String>?) {
@@ -403,6 +596,7 @@ class CardEditActivity : AppCompatActivity() {
         hiddenCheck = null
         dateTimeValues.clear()
         dateTimeButtons.clear()
+        binding.cardNameLayout.hint = cardNameHint(currentType)
         binding.wifiNote.visibility =
             if (currentType == CardType.WIFI) View.VISIBLE else View.GONE
 
@@ -443,11 +637,29 @@ class CardEditActivity : AppCompatActivity() {
                 )
             }
             CardType.LOCATION -> {
-                val numberInput = InputType.TYPE_CLASS_NUMBER or
-                    InputType.TYPE_NUMBER_FLAG_DECIMAL or
-                    InputType.TYPE_NUMBER_FLAG_SIGNED
-                addTextField("latitude", getString(R.string.field_latitude), f("latitude"), numberInput)
-                addTextField("longitude", getString(R.string.field_longitude), f("longitude"), numberInput)
+                addLocationButton()
+                val latField = addTextField(
+                    "latitude", getString(R.string.field_latitude), f("latitude")
+                )
+                addTextField("longitude", getString(R.string.field_longitude), f("longitude"))
+                // Pasting "lat, lng" (e.g. copied from Google Maps) splits
+                // into both fields.
+                var splitting = false
+                latField.doOnTextChanged { text, _, _, _ ->
+                    if (splitting) return@doOnTextChanged
+                    val parts = text?.split(",") ?: return@doOnTextChanged
+                    if (parts.size == 2) {
+                        val lat = parts[0].trim()
+                        val lng = parts[1].trim()
+                        if (lat.toDoubleOrNull() != null && lng.toDoubleOrNull() != null) {
+                            splitting = true
+                            latField.setText(lat)
+                            latField.setSelection(lat.length)
+                            fieldLayouts["longitude"]?.editText?.setText(lng)
+                            splitting = false
+                        }
+                    }
+                }
             }
             CardType.TEXT -> addTextField(
                 "content", getString(R.string.field_text), f("content"),
@@ -607,10 +819,11 @@ class CardEditActivity : AppCompatActivity() {
     /**
      * Reads the contact the user picked. The system picker grants one-time
      * access to just this contact's URI, so every read goes through URIs
-     * derived from it: querying the global Data table needs READ_CONTACTS
-     * and throws SecurityException without it (which is why imports used to
-     * fail with "Couldn't read that contact" for every contact). Every
-     * phone number and email is kept (with its label); the primary one
+     * derived from it — no contacts permission needed on most devices. When
+     * the grant doesn't cover the data rows (SecurityException), ask for
+     * the contacts permission once and retry.
+     *
+     * Every phone number and email is kept (with its label); the primary one
      * becomes the selected value.
      */
     private fun importContact(contactUri: Uri) {
@@ -679,9 +892,17 @@ class CardEditActivity : AppCompatActivity() {
                     "website" to website,
                 )
                 buildForm(prefillFor(CardType.CONTACT))
+                scrollToType(CardType.CONTACT, smooth = true)
                 formDirty = true
             } ?: throw IllegalArgumentException("empty contact cursor")
-        } catch (_: Exception) {
+        } catch (e: SecurityException) {
+            // The picker's one-time grant didn't cover the data rows: ask
+            // for the contacts permission once and retry the same contact.
+            android.util.Log.e("CardEditActivity", "Contact import blocked", e)
+            pendingContactUri = contactUri
+            requestContactsPermission.launch(android.Manifest.permission.READ_CONTACTS)
+        } catch (e: Exception) {
+            android.util.Log.e("CardEditActivity", "Contact import failed", e)
             Toast.makeText(this, R.string.contact_import_failed, Toast.LENGTH_SHORT).show()
         }
     }
