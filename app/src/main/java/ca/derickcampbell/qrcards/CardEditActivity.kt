@@ -32,6 +32,7 @@ import com.google.android.material.color.MaterialColors
 import com.google.android.material.datepicker.MaterialDatePicker
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.snackbar.Snackbar
+import com.google.android.material.textfield.MaterialAutoCompleteTextView
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
 import com.google.android.material.timepicker.MaterialTimePicker
@@ -867,7 +868,7 @@ class CardEditActivity : AppCompatActivity() {
         label: String,
         prefill: String?,
         inputType: Int,
-    ): TextInputEditText {
+    ): MaterialAutoCompleteTextView {
         val density = resources.displayMetrics.density
         val til = TextInputLayout(this).apply {
             layoutParams = LinearLayout.LayoutParams(
@@ -877,7 +878,11 @@ class CardEditActivity : AppCompatActivity() {
             hint = label
             boxBackgroundMode = TextInputLayout.BOX_BACKGROUND_OUTLINE
         }
-        val edit = TextInputEditText(til.context).apply {
+        // MaterialAutoCompleteTextView, not TextInputEditText: the exposed
+        // dropdown end icon (shown when an import yields 2+ numbers/emails)
+        // throws RuntimeException on a plain EditText. It stays freely
+        // editable — the dropdown is only opened via our own picker dialog.
+        val edit = MaterialAutoCompleteTextView(til.context).apply {
             this.inputType = inputType
             setText(currentOptionValue(key, prefill))
         }
