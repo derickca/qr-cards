@@ -9,9 +9,10 @@ import ca.derickcampbell.qrcards.model.CardType
  * fills the form — the user lands in the editor and confirms before
  * anything is saved, so a wrong guess costs one tap, never a bad card.
  *
- * Priority (Derick's call): vCard → Wi-Fi → URL → phone/email (as a Contact
- * card — a shared number or address is almost always "add this person";
- * the narrow Phone/Email cards are one tab tap away) → lat,lng → Text.
+ * Priority (Derick's call): vCard → Wi-Fi → Google Maps link → URL →
+ * phone/email (as a Contact card — a shared number or address is almost
+ * always "add this person"; the narrow Phone/Email cards are one tab tap
+ * away) → lat,lng → Text.
  */
 object ShareSniff {
 
@@ -32,6 +33,16 @@ object ShareSniff {
 
         // Wi-Fi join string: WIFI:T:WPA;S:ssid;P:password;; (unescaped for edit)
         parseWifi(text)?.let { return Draft(CardType.WIFI, it) }
+
+        // Google Maps share → location card with the pinned coordinates.
+        // (Short goo.gl links can't be expanded: the app is offline by
+        // design, so only the long forms are picked up.)
+        parseMapsUrl(text)?.let { (lat, lng) ->
+            return Draft(
+                CardType.LOCATION,
+                mapOf("latitude" to lat, "longitude" to lng),
+            )
+        }
 
         // URL.
         if (Patterns.WEB_URL.matcher(text).matches()) {
@@ -73,10 +84,38 @@ object ShareSniff {
 
     private fun parseLatLng(text: String): Pair<String, String>? {
         val m = LAT_LNG.matchEntire(text) ?: return null
-        val lat = m.groupValues[1].toDoubleOrNull() ?: return null
-        val lng = m.groupValues[2].toDoubleOrNull() ?: return null
-        if (lat !in -90.0..90.0 || lng !in -180.0..180.0) return null
-        return m.groupValues[1] to m.groupValues[2]
+        return validLatLng(m.groupValues[1], m.groupValues[2])
+    }
+
+    private fun validLatLng(lat: String, lng: String): Pair<String, String>? {
+        val la = lat.toDoubleOrNull() ?: return null
+        val ln = lng.toDoubleOrNull() ?: return null
+        if (la !in -90.0..90.0 || ln !in -180.0..180.0) return null
+        return lat to lng
+    }
+
+    /**
+     * Google Maps shared links, long form:
+     * - https://www.google.com/maps/@49.28,-123.12,15z
+     * - https://www.google.com/maps/place/Foo/@49.28,-123.12,15z
+     * - https://www.google.com/maps/search/?api=1&query=49.28,-123.12
+     * - https://maps.google.com/?q=49.28,-123.12
+     */
+    private fun parseMapsUrl(text: String): Pair<String, String>? {
+        val lower = text.lowercase()
+        val isMaps = (lower.contains("google.") && lower.contains("/maps")) ||
+            lower.contains("maps.google.")
+        if (!isMaps) return null
+        // @lat,lng[,zoom] form.
+        Regex("@(-?\\d+(?:\\.\\d+)?),(-?\\d+(?:\\.\\d+)?)").find(text)?.let {
+            return validLatLng(it.groupValues[1], it.groupValues[2])
+        }
+        // ?q=lat,lng or ?query=lat,lng form.
+        Regex("[?&](?:q|query)=(-?\\d+(?:\\.\\d+)?),(-?\\d+(?:\\.\\d+)?)")
+            .find(text)?.let {
+                return validLatLng(it.groupValues[1], it.groupValues[2])
+            }
+        return null
     }
 
     private val WIFI_PATTERN = Regex(

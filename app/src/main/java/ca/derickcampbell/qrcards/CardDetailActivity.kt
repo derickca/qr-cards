@@ -8,6 +8,11 @@ import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.method.LinkMovementMethod
+import android.text.style.URLSpan
+import android.text.util.Linkify
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
@@ -21,6 +26,7 @@ import ca.derickcampbell.qrcards.data.CardRepository
 import ca.derickcampbell.qrcards.databinding.ActivityCardDetailBinding
 import ca.derickcampbell.qrcards.model.CardType
 import ca.derickcampbell.qrcards.model.QrCard
+import ca.derickcampbell.qrcards.payload.CardPayloads
 import ca.derickcampbell.qrcards.qr.QrRenderer
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.snackbar.Snackbar
@@ -311,8 +317,8 @@ class CardDetailActivity : AppCompatActivity() {
             return
         }
         val density = resources.displayMetrics.density
-        rows.forEachIndexed { index, (label, value) ->
-            val row = LinearLayout(this).apply {
+        rows.forEachIndexed { index, dataRow ->
+            val rowLayout = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT,
@@ -321,20 +327,74 @@ class CardDetailActivity : AppCompatActivity() {
                     if (index > 0) topMargin = (16 * density).toInt()
                 }
             }
-            row.addView(TextView(this).apply {
-                text = label
+            rowLayout.addView(TextView(this).apply {
+                text = dataRow.label
                 setTextAppearance(
                     com.google.android.material.R.style.TextAppearance_Material3_LabelMedium
                 )
             })
-            row.addView(TextView(this).apply {
-                text = value
+            rowLayout.addView(TextView(this).apply {
+                text = dataRow.value
                 setTextAppearance(
                     com.google.android.material.R.style.TextAppearance_Material3_TitleMedium
                 )
                 setPadding(0, (2 * density).toInt(), 0, 0)
+                applyDataLink(this, dataRow, card)
             })
-            container.addView(row)
+            container.addView(rowLayout)
+        }
+    }
+
+    /** How a data-face value row opens when tapped. */
+    private enum class DataLink { NONE, WEB, EMAIL, PHONE, SMS, MAPS }
+
+    private data class DataRow(
+        val label: String,
+        val value: String,
+        val link: DataLink = DataLink.NONE,
+    )
+
+    /**
+     * Makes a data-face value tappable: links open in the browser, emails
+     * in the mail app, phone numbers in the dialer, SMS numbers in the
+     * messaging app, and the Maps row in Google Maps. Tapping anywhere
+     * else on the row still flips the card back.
+     */
+    private fun applyDataLink(view: TextView, row: DataRow, card: QrCard) {
+        when (row.link) {
+            DataLink.NONE -> return
+            DataLink.WEB -> linkify(view, Linkify.WEB_URLS or Linkify.EMAIL_ADDRESSES)
+            DataLink.EMAIL -> linkify(view, Linkify.EMAIL_ADDRESSES)
+            DataLink.PHONE -> linkify(view, Linkify.PHONE_NUMBERS)
+            DataLink.SMS -> {
+                val dialable = row.value.filter { it.isDigit() || it == '+' }
+                if (dialable.isEmpty()) return
+                view.text = SpannableString(row.value).apply {
+                    setSpan(
+                        URLSpan("smsto:$dialable"),
+                        0, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                    )
+                }
+                view.movementMethod = LinkMovementMethod.getInstance()
+            }
+            DataLink.MAPS -> {
+                val lat = card.fields["latitude"].orEmpty().trim()
+                val lng = card.fields["longitude"].orEmpty().trim()
+                if (lat.isEmpty() || lng.isEmpty()) return
+                view.text = SpannableString(row.value).apply {
+                    setSpan(
+                        URLSpan(CardPayloads.mapsUrl(lat, lng)),
+                        0, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                    )
+                }
+                view.movementMethod = LinkMovementMethod.getInstance()
+            }
+        }
+    }
+
+    private fun linkify(view: TextView, mask: Int) {
+        if (Linkify.addLinks(view, mask)) {
+            view.movementMethod = LinkMovementMethod.getInstance()
         }
     }
 
@@ -342,55 +402,83 @@ class CardDetailActivity : AppCompatActivity() {
      * Labeled (label, value) rows for the back face, in display order.
      * Blank values are skipped — the face shows only what's actually there.
      */
-    private fun dataRows(card: QrCard): List<Pair<String, String>> {
+    private fun dataRows(card: QrCard): List<DataRow> {
         val f = card.fields
         fun v(key: String) = f[key].orEmpty().trim()
-        fun rows(vararg pairs: Pair<String, String>) =
-            pairs.filter { it.second.isNotBlank() }
+        fun row(label: String, value: String, link: DataLink = DataLink.NONE) =
+            DataRow(label, value, link)
+        fun rows(vararg rows: DataRow) = rows.filter { it.value.isNotBlank() }
         return when (card.type) {
             CardType.CONTACT -> {
                 val name = listOf(v("firstName"), v("lastName"))
                     .filter { it.isNotEmpty() }.joinToString(" ")
                 rows(
-                    getString(R.string.field_name) to name,
-                    getString(R.string.field_organization) to v("organization"),
-                    getString(R.string.field_phone) to v("phone"),
-                    getString(R.string.field_email) to v("email"),
-                    getString(R.string.field_website) to v("website"),
+                    row(getString(R.string.field_name), name),
+                    row(getString(R.string.field_organization), v("organization")),
+                    row(getString(R.string.field_phone), v("phone"), DataLink.PHONE),
+                    row(getString(R.string.field_email), v("email"), DataLink.EMAIL),
+                    row(getString(R.string.field_website), v("website"), DataLink.WEB),
                 )
             }
             CardType.WIFI -> rows(
-                getString(R.string.field_ssid) to v("ssid"),
-                getString(R.string.field_password) to v("password"),
+                row(getString(R.string.field_ssid), v("ssid")),
+                row(getString(R.string.field_password), v("password")),
             )
             CardType.URL -> {
                 val service = v("service")
                 rows(
-                    getString(R.string.field_service) to
+                    row(
+                        getString(R.string.field_service),
                         service.replaceFirstChar { it.uppercase() },
-                    getString(R.string.field_url) to v("url"),
+                    ),
+                    row(getString(R.string.field_url), v("url"), DataLink.WEB),
                 )
             }
-            CardType.LOCATION -> rows(
-                getString(R.string.field_latitude) to v("latitude"),
-                getString(R.string.field_longitude) to v("longitude"),
+            CardType.LOCATION -> {
+                val lat = v("latitude")
+                val lng = v("longitude")
+                buildList {
+                    if (lat.isNotBlank()) {
+                        add(row(getString(R.string.field_latitude), lat))
+                    }
+                    if (lng.isNotBlank()) {
+                        add(row(getString(R.string.field_longitude), lng))
+                    }
+                    if (lat.isNotBlank() && lng.isNotBlank()) {
+                        add(
+                            row(
+                                getString(R.string.field_map),
+                                getString(R.string.open_in_maps),
+                                DataLink.MAPS,
+                            )
+                        )
+                    }
+                }
+            }
+            CardType.TEXT -> rows(
+                row(getString(R.string.field_text), v("content"), DataLink.WEB)
             )
-            CardType.TEXT -> rows(getString(R.string.field_text) to v("content"))
             CardType.EMAIL -> rows(
-                getString(R.string.field_email_address) to v("address"),
-                getString(R.string.field_subject) to v("subject"),
-                getString(R.string.field_body) to v("body"),
+                row(
+                    getString(R.string.field_email_address),
+                    v("address"),
+                    DataLink.EMAIL,
+                ),
+                row(getString(R.string.field_subject), v("subject")),
+                row(getString(R.string.field_body), v("body")),
             )
-            CardType.PHONE -> rows(getString(R.string.field_number) to v("number"))
+            CardType.PHONE -> rows(
+                row(getString(R.string.field_number), v("number"), DataLink.PHONE)
+            )
             CardType.SMS -> rows(
-                getString(R.string.field_number) to v("number"),
-                getString(R.string.field_message) to v("message"),
+                row(getString(R.string.field_number), v("number"), DataLink.SMS),
+                row(getString(R.string.field_message), v("message")),
             )
             CardType.CALENDAR_EVENT -> rows(
-                getString(R.string.field_title) to v("title"),
-                getString(R.string.field_starts) to formatIsoDateTime(v("start")),
-                getString(R.string.field_ends) to formatIsoDateTime(v("end")),
-                getString(R.string.field_location) to v("location"),
+                row(getString(R.string.field_title), v("title")),
+                row(getString(R.string.field_starts), formatIsoDateTime(v("start"))),
+                row(getString(R.string.field_ends), formatIsoDateTime(v("end"))),
+                row(getString(R.string.field_location), v("location")),
             )
         }
     }
@@ -471,7 +559,18 @@ class CardDetailActivity : AppCompatActivity() {
             Snackbar.make(binding.root, R.string.copy_failed, Snackbar.LENGTH_SHORT).show()
             return
         }
-        clipboard.setPrimaryClip(ClipData.newPlainText(current.name, current.payload))
+        // Locations copy as a Google Maps link: unlike the geo: payload
+        // (which chat apps don't linkify), an https maps URL is tappable
+        // everywhere and opens directly in Google Maps.
+        val text = if (current.type == CardType.LOCATION) {
+            val lat = current.fields["latitude"].orEmpty().trim()
+            val lng = current.fields["longitude"].orEmpty().trim()
+            if (lat.isNotEmpty() && lng.isNotEmpty()) CardPayloads.mapsUrl(lat, lng)
+            else current.payload
+        } else {
+            current.payload
+        }
+        clipboard.setPrimaryClip(ClipData.newPlainText(current.name, text))
         Snackbar.make(binding.root, R.string.copied, Snackbar.LENGTH_SHORT).show()
     }
 

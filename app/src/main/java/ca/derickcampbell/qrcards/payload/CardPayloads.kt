@@ -91,6 +91,14 @@ object CardPayloads {
         return "geo:$latitude,$longitude"
     }
 
+    /**
+     * Shareable Google Maps link for a location. Unlike the geo: payload
+     * (which chat apps don't linkify), an https maps URL is tappable
+     * everywhere and opens directly in Google Maps.
+     */
+    fun mapsUrl(latitude: String, longitude: String): String =
+        "https://www.google.com/maps/search/?api=1&query=$latitude,$longitude"
+
     /** Plain text. The scanner shows it and offers copy. */
     fun text(content: String): String {
         require(content.isNotEmpty()) { "Text must not be empty" }

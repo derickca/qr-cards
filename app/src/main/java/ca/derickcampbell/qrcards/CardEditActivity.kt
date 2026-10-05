@@ -214,6 +214,8 @@ class CardEditActivity : AppCompatActivity() {
     // Current-location lookup asks for the location permission only when the
     // button is tapped; the app is otherwise fully permission-free.
     private var locationListener: android.location.LocationListener? = null
+    /** The "Current location" button, while it's on screen — for busy state. */
+    private var locationButton: MaterialButton? = null
     private val requestLocationPermission =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
             val granted = grants[android.Manifest.permission.ACCESS_FINE_LOCATION] == true ||
@@ -606,7 +608,10 @@ class CardEditActivity : AppCompatActivity() {
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply { topMargin = (8 * density).toInt() }
             setOnClickListener { onCurrentLocationClicked() }
-        }.also { binding.formContainer.addView(it) }
+        }.also {
+            binding.formContainer.addView(it)
+            locationButton = it
+        }
     }
 
     private fun onCurrentLocationClicked() {
@@ -657,6 +662,7 @@ class CardEditActivity : AppCompatActivity() {
             return
         }
         Toast.makeText(this, R.string.locating, Toast.LENGTH_SHORT).show()
+        setLocationButtonBusy(true)
         var done = false
         val listener = object : android.location.LocationListener {
             override fun onLocationChanged(location: android.location.Location) {
@@ -677,6 +683,7 @@ class CardEditActivity : AppCompatActivity() {
         }.isSuccess
         if (!requested) {
             locationListener = null
+            setLocationButtonBusy(false)
             Toast.makeText(this, R.string.location_unavailable, Toast.LENGTH_SHORT).show()
             return
         }
@@ -687,7 +694,10 @@ class CardEditActivity : AppCompatActivity() {
                 locationListener = null
                 val fallback = lastKnown()
                 if (fallback != null) applyLocation(fallback.latitude, fallback.longitude)
-                else Toast.makeText(this, R.string.location_unavailable, Toast.LENGTH_SHORT).show()
+                else {
+                    setLocationButtonBusy(false)
+                    Toast.makeText(this, R.string.location_unavailable, Toast.LENGTH_SHORT).show()
+                }
             }
         }, 15_000)
     }
@@ -699,12 +709,27 @@ class CardEditActivity : AppCompatActivity() {
         fieldLayouts["longitude"]?.editText
             ?.setText(String.format(java.util.Locale.US, "%.6f", longitude))
         formDirty = true
+        setLocationButtonBusy(false)
+    }
+
+    /**
+     * While a fresh GPS fix is pending, the button says so and can't be
+     * re-tapped — previously nothing on screen showed it was still working.
+     */
+    private fun setLocationButtonBusy(busy: Boolean) {
+        locationButton?.apply {
+            isEnabled = !busy
+            text = getString(
+                if (busy) R.string.locating else R.string.use_current_location
+            )
+        }
     }
 
     // -- dynamic form --
 
     private fun buildForm(type: CardType, prefill: Map<String, String>?) {
         binding.formContainer.removeAllViews()
+        locationButton = null
         refreshImportErrorCard()
         fieldLayouts.clear()
         hiddenCheck = null

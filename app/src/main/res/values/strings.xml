@@ -122,6 +122,8 @@
     <string name="wifi_plaintext_note">The password is baked into the QR code as plain text — anyone who scans it can read it. Use a guest network, never your main LAN password.</string>
     <string name="field_latitude">Latitude</string>
     <string name="field_longitude">Longitude</string>
+    <string name="field_map">Map</string>
+    <string name="open_in_maps">Open in Maps</string>
     <string name="use_current_location">Current location</string>
     <string name="locating">Getting your location…</string>
     <string name="location_unavailable">Couldn\'t get your location</string>
