@@ -51,6 +51,7 @@
     <string name="fewer_types">Less</string>
     <string name="import_from_contacts">Import from contacts</string>
     <string name="contact_import_failed">Couldn\'t read that contact</string>
+    <string name="switch_type_failed">Couldn\'t switch card type</string>
 
     <!-- Detail / present mode -->
     <string name="share_png">Share PNG</string>
@@ -153,7 +154,9 @@
     <!-- Card flip in Show -->
     <string name="flip_to_data_desc">Show the encoded data behind this code</string>
     <string name="flip_to_qr_desc">Show the QR code</string>
-    <string name="show_data_title">Encoded data</string>
+    <string name="show_details_title">Card details</string>
+    <string name="field_name">Name</string>
+    <string name="field_service">Service</string>
     <string name="copy">Copy</string>
     <string name="copied">Copied</string>
     <string name="copy_failed">Couldn’t copy</string>

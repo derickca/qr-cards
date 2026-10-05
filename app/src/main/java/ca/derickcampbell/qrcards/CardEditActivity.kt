@@ -153,16 +153,25 @@ class CardEditActivity : AppCompatActivity() {
      * Social profile templates: URL cards with a per-service prefix and a
      * "service" field tag so the list/detail can hint at the service.
      */
+    private data class SocialTemplate(
+        val id: String,
+        val displayName: String,
+        val prefix: String,
+        val icon: Int,
+    )
+
     private val socialTemplates = listOf(
-        Triple("spotify", "https://open.spotify.com/", R.drawable.ic_social_spotify),
-        Triple("instagram", "https://www.instagram.com/", R.drawable.ic_social_instagram),
-        Triple("whatsapp", "https://wa.me/", R.drawable.ic_social_whatsapp),
-        Triple("linkedin", "https://www.linkedin.com/in/", R.drawable.ic_social_linkedin),
+        SocialTemplate("spotify", "Spotify", "https://open.spotify.com/", R.drawable.ic_social_spotify),
+        SocialTemplate("instagram", "Instagram", "https://www.instagram.com/", R.drawable.ic_social_instagram),
+        SocialTemplate("whatsapp", "WhatsApp", "https://wa.me/", R.drawable.ic_social_whatsapp),
+        SocialTemplate("linkedin", "LinkedIn", "https://www.linkedin.com/in/", R.drawable.ic_social_linkedin),
     )
     private var serviceTemplate: String? = null
 
     private val pickContactLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            // Fresh import attempt: the permission fallback hasn't been used.
+            contactsPermissionAsked = false
             if (result.resultCode == RESULT_OK) {
                 val uri = result.data?.data
                 if (uri != null) importContact(uri)
@@ -174,14 +183,25 @@ class CardEditActivity : AppCompatActivity() {
     // is enough on most devices — but when the grant doesn't cover the
     // contact's data rows, fall back to asking for the contacts permission
     // once and retry. The app stays permission-free until Import is used.
+    //
+    // contactsPermissionAsked guards the retry: a repeat SecurityException
+    // after the grant is a genuine failure, never another permission
+    // request — the permission is not re-requested in a loop.
     private var pendingContactUri: Uri? = null
+    private var contactsPermissionAsked = false
     private val requestContactsPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             val uri = pendingContactUri
             pendingContactUri = null
-            if (granted && uri != null) importContact(uri)
-            else if (!granted) {
-                Toast.makeText(this, R.string.contact_import_failed, Toast.LENGTH_SHORT).show()
+            if (granted && uri != null) {
+                // contactsPermissionAsked stays true: if the retry still
+                // can't read, that's a genuine failure, not a re-request.
+                importContact(uri)
+            } else {
+                contactsPermissionAsked = false
+                if (!granted) {
+                    Toast.makeText(this, R.string.contact_import_failed, Toast.LENGTH_SHORT).show()
+                }
             }
         }
 
@@ -256,7 +276,7 @@ class CardEditActivity : AppCompatActivity() {
         binding.typeMoreButton.setOnClickListener { onArrowClicked() }
         binding.typeTabStrip.setOnScrollChangeListener { _, _, _, _, _ -> syncArrowIcon() }
 
-        buildForm(prefillFor(currentType))
+        buildForm(currentType, prefillFor(currentType))
         buildColorRow()
         buildQrColorRow()
         binding.cancelButton.setOnClickListener { onCancel() }
@@ -325,7 +345,7 @@ class CardEditActivity : AppCompatActivity() {
         currentType = newType
         refreshTypeHeader()
         refreshTypeTabs()
-        buildForm(prefillFor(newType))
+        buildForm(newType, prefillFor(newType))
     }
 
     /**
@@ -436,7 +456,15 @@ class CardEditActivity : AppCompatActivity() {
         }
         tab.addView(icon)
         styleTab(tab, icon, selected = type == currentType)
-        tab.setOnClickListener { switchType(type) }
+        // A tab tap must never drop the user out of the editor: contain the
+        // unexpected here so a failed switch leaves them in Edit, swapping
+        // the field set in place, instead of glitching back to the List.
+        tab.setOnClickListener {
+            runCatching { switchType(type) }.onFailure { e ->
+                android.util.Log.e("CardEditActivity", "Type switch failed", e)
+                Toast.makeText(this, R.string.switch_type_failed, Toast.LENGTH_SHORT).show()
+            }
+        }
         return tab
     }
 
@@ -654,19 +682,19 @@ class CardEditActivity : AppCompatActivity() {
 
     // -- dynamic form --
 
-    private fun buildForm(prefill: Map<String, String>?) {
+    private fun buildForm(type: CardType, prefill: Map<String, String>?) {
         binding.formContainer.removeAllViews()
         fieldLayouts.clear()
         hiddenCheck = null
         dateTimeValues.clear()
         dateTimeButtons.clear()
-        binding.cardNameLayout.hint = cardNameHint(currentType)
+        binding.cardNameLayout.hint = cardNameHint(type)
         binding.wifiNote.visibility =
-            if (currentType == CardType.WIFI) View.VISIBLE else View.GONE
+            if (type == CardType.WIFI) View.VISIBLE else View.GONE
 
         fun f(key: String) = prefill?.get(key)
 
-        when (currentType) {
+        when (type) {
             CardType.URL -> {
                 // Social profile templates: one tap pre-fills the service's
                 // URL prefix. The card stays a plain URL card; "service" is
@@ -678,8 +706,8 @@ class CardEditActivity : AppCompatActivity() {
                 )
                 urlField.doOnTextChanged { text, _, _, _ ->
                     serviceTemplate = socialTemplates.firstOrNull {
-                        text.toString().startsWith(it.second, ignoreCase = true)
-                    }?.first
+                        text.toString().startsWith(it.prefix, ignoreCase = true)
+                    }?.id
                     refreshTemplateSelection()
                 }
             }
@@ -893,94 +921,154 @@ class CardEditActivity : AppCompatActivity() {
     // -- contact import --
 
     /**
-     * Reads the contact the user picked. The system picker grants one-time
-     * access to just this contact's URI, so every read goes through URIs
-     * derived from it — no contacts permission needed on most devices. When
-     * the grant doesn't cover the data rows (SecurityException), ask for
-     * the contacts permission once and retry.
+     * Imports the contact the user picked. The read and the form update are
+     * separate steps: the contact is read fully first, then applied to the
+     * Contact form in one go — so a successful import always lands every
+     * mapped field on screen, and a failed read never leaves a half-built
+     * form behind.
+     *
+     * The system picker grants one-time access to just this contact's URI,
+     * so every read goes through URIs derived from it — no contacts
+     * permission needed on most devices. When the grant doesn't cover the
+     * data rows (SecurityException), ask for the contacts permission once
+     * and retry; the error toast only appears for a genuine failure.
      *
      * Every phone number and email is kept (with its label); the primary one
      * becomes the selected value.
      */
     private fun importContact(contactUri: Uri) {
         try {
-            val cr = contentResolver
-            val dataUri =
-                Uri.withAppendedPath(contactUri, ContactsContract.Contacts.Data.CONTENT_DIRECTORY)
-            cr.query(
-                contactUri,
-                arrayOf(
-                    ContactsContract.Contacts._ID,
-                    ContactsContract.Contacts.DISPLAY_NAME,
-                ),
-                null, null, null,
-            )?.use { c ->
-                if (!c.moveToFirst()) return
-                val displayName = c.getString(1).orEmpty()
-                val (firstName, lastName) = splitName(displayName)
-
-                val phones = readContactOptions(
-                    cr, dataUri,
-                    ContactsContract.CommonDataKinds.Phone.CONTENT_ITEM_TYPE,
-                    ContactsContract.CommonDataKinds.Phone.NUMBER,
-                    ContactsContract.CommonDataKinds.Phone.TYPE,
-                    ContactsContract.CommonDataKinds.Phone.LABEL,
-                ) { type, label ->
-                    ContactsContract.CommonDataKinds.Phone.getTypeLabel(resources, type, label)
-                        .toString()
-                }
-                val emails = readContactOptions(
-                    cr, dataUri,
-                    ContactsContract.CommonDataKinds.Email.CONTENT_ITEM_TYPE,
-                    ContactsContract.CommonDataKinds.Email.ADDRESS,
-                    ContactsContract.CommonDataKinds.Email.TYPE,
-                    ContactsContract.CommonDataKinds.Email.LABEL,
-                ) { type, label ->
-                    ContactsContract.CommonDataKinds.Email.getTypeLabel(resources, type, label)
-                        .toString()
-                }
-                val organization = readContactSingle(
-                    cr, dataUri,
-                    ContactsContract.CommonDataKinds.Organization.CONTENT_ITEM_TYPE,
-                    ContactsContract.CommonDataKinds.Organization.COMPANY,
-                )
-                val website = readContactSingle(
-                    cr, dataUri,
-                    ContactsContract.CommonDataKinds.Website.CONTENT_ITEM_TYPE,
-                    ContactsContract.CommonDataKinds.Website.URL,
-                )
-
-                if (phones.isNotEmpty()) {
-                    optionLists["phone"] = phones.toMutableList()
-                    optionSelection["phone"] = 0
-                }
-                if (emails.isNotEmpty()) {
-                    optionLists["email"] = emails.toMutableList()
-                    optionSelection["email"] = 0
-                }
-                // Cache under CONTACT so switching types and back keeps the import.
-                typeFieldCache[CardType.CONTACT] = mutableMapOf(
-                    "firstName" to firstName,
-                    "lastName" to lastName,
-                    "organization" to organization,
-                    "phone" to phones.firstOrNull()?.value.orEmpty(),
-                    "email" to emails.firstOrNull()?.value.orEmpty(),
-                    "website" to website,
-                )
-                buildForm(prefillFor(CardType.CONTACT))
-                scrollToType(CardType.CONTACT, smooth = true)
-                formDirty = true
-            } ?: throw IllegalArgumentException("empty contact cursor")
+            applyImportedContact(readContact(contactUri))
         } catch (e: SecurityException) {
             // The picker's one-time grant didn't cover the data rows: ask
             // for the contacts permission once and retry the same contact.
             android.util.Log.e("CardEditActivity", "Contact import blocked", e)
-            pendingContactUri = contactUri
-            requestContactsPermission.launch(android.Manifest.permission.READ_CONTACTS)
+            if (contactsPermissionAsked) {
+                // Already asked and the retry still can't read: genuine
+                // failure — never re-request in a loop.
+                contactsPermissionAsked = false
+                Toast.makeText(this, R.string.contact_import_failed, Toast.LENGTH_SHORT).show()
+            } else {
+                contactsPermissionAsked = true
+                pendingContactUri = contactUri
+                requestContactsPermission.launch(android.Manifest.permission.READ_CONTACTS)
+            }
         } catch (e: Exception) {
             android.util.Log.e("CardEditActivity", "Contact import failed", e)
+            contactsPermissionAsked = false
             Toast.makeText(this, R.string.contact_import_failed, Toast.LENGTH_SHORT).show()
         }
+    }
+
+    /** One contact's imported data, read fully before touching the form. */
+    private data class ImportedContact(
+        val firstName: String,
+        val lastName: String,
+        val organization: String,
+        val phones: List<FieldOption>,
+        val emails: List<FieldOption>,
+        val website: String,
+    )
+
+    private fun readContact(contactUri: Uri): ImportedContact {
+        val cr = contentResolver
+        // On the permission-granted retry, resolve the concrete contact URI
+        // first: the picker's one-time-grant URI can have device-specific
+        // quirks that a plain READ_CONTACTS query doesn't.
+        val resolved = if (contactsPermissionAsked) {
+            runCatching { ContactsContract.Contacts.lookupContact(cr, contactUri) }
+                .getOrNull() ?: contactUri
+        } else {
+            contactUri
+        }
+        val dataUri =
+            Uri.withAppendedPath(resolved, ContactsContract.Contacts.Data.CONTENT_DIRECTORY)
+        cr.query(
+            resolved,
+            arrayOf(
+                ContactsContract.Contacts._ID,
+                ContactsContract.Contacts.DISPLAY_NAME,
+            ),
+            null, null, null,
+        )?.use { c ->
+            if (!c.moveToFirst()) throw IllegalArgumentException("empty contact cursor")
+            val displayName = c.getString(1).orEmpty()
+            val (firstName, lastName) = splitName(displayName)
+
+            val phones = readContactOptions(
+                cr, dataUri,
+                ContactsContract.CommonDataKinds.Phone.CONTENT_ITEM_TYPE,
+                ContactsContract.CommonDataKinds.Phone.NUMBER,
+                ContactsContract.CommonDataKinds.Phone.TYPE,
+                ContactsContract.CommonDataKinds.Phone.LABEL,
+            ) { type, label ->
+                ContactsContract.CommonDataKinds.Phone.getTypeLabel(resources, type, label)
+                    .toString()
+            }
+            val emails = readContactOptions(
+                cr, dataUri,
+                ContactsContract.CommonDataKinds.Email.CONTENT_ITEM_TYPE,
+                ContactsContract.CommonDataKinds.Email.ADDRESS,
+                ContactsContract.CommonDataKinds.Email.TYPE,
+                ContactsContract.CommonDataKinds.Email.LABEL,
+            ) { type, label ->
+                ContactsContract.CommonDataKinds.Email.getTypeLabel(resources, type, label)
+                    .toString()
+            }
+            val organization = readContactSingle(
+                cr, dataUri,
+                ContactsContract.CommonDataKinds.Organization.CONTENT_ITEM_TYPE,
+                ContactsContract.CommonDataKinds.Organization.COMPANY,
+            )
+            val website = readContactSingle(
+                cr, dataUri,
+                ContactsContract.CommonDataKinds.Website.CONTENT_ITEM_TYPE,
+                ContactsContract.CommonDataKinds.Website.URL,
+            )
+            return ImportedContact(
+                firstName, lastName, organization, phones, emails, website
+            )
+        } ?: throw IllegalArgumentException("empty contact cursor")
+    }
+
+    /**
+     * Lands the imported contact on the Contact form: the type is set
+     * explicitly and the form is rebuilt for it, so the full contact field
+     * set is what's on screen — with every mapped value filled in — no
+     * matter what was showing before. Stale multi-value options from a
+     * previous import are cleared, not left behind.
+     */
+    private fun applyImportedContact(imported: ImportedContact) {
+        contactsPermissionAsked = false
+        if (imported.phones.isNotEmpty()) {
+            optionLists["phone"] = imported.phones.toMutableList()
+            optionSelection["phone"] = 0
+        } else {
+            optionLists.remove("phone")
+            optionSelection.remove("phone")
+        }
+        if (imported.emails.isNotEmpty()) {
+            optionLists["email"] = imported.emails.toMutableList()
+            optionSelection["email"] = 0
+        } else {
+            optionLists.remove("email")
+            optionSelection.remove("email")
+        }
+        // Cache under CONTACT so switching types and back keeps the import.
+        typeFieldCache[CardType.CONTACT] = mutableMapOf(
+            "firstName" to imported.firstName,
+            "lastName" to imported.lastName,
+            "organization" to imported.organization,
+            "phone" to imported.phones.firstOrNull()?.value.orEmpty(),
+            "email" to imported.emails.firstOrNull()?.value.orEmpty(),
+            "website" to imported.website,
+        )
+        currentType = CardType.CONTACT
+        refreshTypeHeader()
+        refreshTypeTabs()
+        buildForm(CardType.CONTACT, prefillFor(CardType.CONTACT))
+        scrollToType(CardType.CONTACT, smooth = true)
+        formDirty = true
     }
 
     private fun readContactOptions(
@@ -1158,15 +1246,15 @@ class CardEditActivity : AppCompatActivity() {
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply { topMargin = (4 * density).toInt() }
         }
-        socialTemplates.forEach { (service, prefix, icon) ->
+        socialTemplates.forEach { template ->
             MaterialButton(
                 this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle
             ).apply {
-                setIconResource(icon)
+                setIconResource(template.icon)
                 iconGravity = MaterialButton.ICON_GRAVITY_TEXT_START
                 iconPadding = 0
                 text = null
-                contentDescription = getString(R.string.social_template_desc, service)
+                contentDescription = getString(R.string.social_template_desc, template.displayName)
                 isCheckable = true
                 minimumWidth = 0
                 minWidth = 0
@@ -1179,14 +1267,20 @@ class CardEditActivity : AppCompatActivity() {
                 setPadding(0, 0, 0, 0)
                 setOnClickListener {
                     val urlField = fieldLayouts["url"]?.editText
-                    urlField?.setText(prefix)
-                    urlField?.setSelection(prefix.length)
+                    urlField?.setText(template.prefix)
+                    urlField?.setSelection(template.prefix.length)
                     urlField?.requestFocus()
-                    serviceTemplate = service
+                    serviceTemplate = template.id
+                    // Name the card after the service — but only when the
+                    // name field is still empty; never overwrite what the
+                    // user typed.
+                    if (binding.cardNameInput.text.isNullOrBlank()) {
+                        binding.cardNameInput.setText(template.displayName)
+                    }
                     formDirty = true
                     refreshTemplateSelection()
                 }
-                tag = service
+                tag = template.id
             }.also { row.addView(it) }
         }
         binding.formContainer.addView(row)
@@ -1419,9 +1513,9 @@ class CardEditActivity : AppCompatActivity() {
             // stale tag.
             val url = fields["url"].orEmpty()
             val matched = socialTemplates.firstOrNull {
-                url.startsWith(it.second, ignoreCase = true)
+                url.startsWith(it.prefix, ignoreCase = true)
             }
-            if (matched != null) fields["service"] = matched.first
+            if (matched != null) fields["service"] = matched.id
             else fields.remove("service")
         }
         val card = QrCard(

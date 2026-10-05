@@ -10,6 +10,8 @@ import android.os.Bundle
 import android.provider.Settings
 import android.view.View
 import android.view.WindowManager
+import android.widget.LinearLayout
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -110,13 +112,19 @@ class CardDetailActivity : AppCompatActivity() {
         binding.qrDataView.cameraDistance = cameraDistance
 
         binding.toolbar.setNavigationOnClickListener { finish() }
-        binding.qrFlipContainer.setOnClickListener { flipCard() }
+        // Tap toggles both directions, on either face. The back face's
+        // scroll and row containers carry the tap too: a ScrollView eats
+        // taps on its own area, which used to make the flip one-way.
+        val flipTap = View.OnClickListener { flipCard() }
+        binding.qrFlipContainer.setOnClickListener(flipTap)
+        binding.qrDataView.setOnClickListener(flipTap)
+        binding.dataScroll.setOnClickListener(flipTap)
+        binding.dataRows.setOnClickListener(flipTap)
         binding.sharePngButton.setOnClickListener { sharePng() }
         binding.exportSvgButton.setOnClickListener {
             card?.let { svgExportLauncher.launch(exportFileName(it, "svg")) }
         }
         binding.copyPayloadButton.setOnClickListener { copyPayload() }
-        binding.copyDataButton.setOnClickListener { copyPayload() }
         binding.shareVcardButton.setOnClickListener { shareVcard() }
         binding.saveVcardButton.setOnClickListener {
             card?.let { vcfExportLauncher.launch(exportFileName(it, "vcf")) }
@@ -191,8 +199,8 @@ class CardDetailActivity : AppCompatActivity() {
 
     private fun bindCard() {
         val current = card ?: return
+        // The toolbar names the card; no second name label below the card.
         binding.toolbar.title = current.name
-        binding.cardName.text = current.name
         // vCard actions only make sense for contact cards.
         binding.vcardRow.visibility =
             if (current.type == CardType.CONTACT) View.VISIBLE else View.GONE
@@ -239,14 +247,131 @@ class CardDetailActivity : AppCompatActivity() {
                     foreground = current.qrColor ?: Color.BLACK,
                 )
             )
-            // The back of the card: the encoded data, for the "check before
-            // you open" preview. Populated on reveal, so a sensitive card's
-            // payload never sits in the view before confirmation.
-            binding.qrDataText.text = current.payload
+            // The back of the card: the card's details as labeled fields, for
+            // the "check before you open" preview. Populated on reveal, so a
+            // sensitive card's payload never sits in the view before
+            // confirmation.
+            buildDataFace(current)
         } catch (e: Exception) {
             Toast.makeText(this, R.string.render_failed, Toast.LENGTH_LONG).show()
             finish()
         }
+    }
+
+    // -- card details (back face) --
+
+    /**
+     * The back of the card: clearly labeled fields with pleasant spacing,
+     * built from the card's stored fields. Falls back to the raw payload
+     * when there's nothing structured to show (e.g. a card restored from
+     * an old backup), so the face is never blank.
+     */
+    private fun buildDataFace(card: QrCard) {
+        val container = binding.dataRows
+        container.removeAllViews()
+        val rows = dataRows(card)
+        if (rows.isEmpty()) {
+            container.addView(TextView(this).apply {
+                text = card.payload
+                typeface = android.graphics.Typeface.MONOSPACE
+                setTextAppearance(
+                    com.google.android.material.R.style.TextAppearance_Material3_BodyMedium
+                )
+            })
+            return
+        }
+        val density = resources.displayMetrics.density
+        rows.forEachIndexed { index, (label, value) ->
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                ).apply {
+                    if (index > 0) topMargin = (16 * density).toInt()
+                }
+            }
+            row.addView(TextView(this).apply {
+                text = label
+                setTextAppearance(
+                    com.google.android.material.R.style.TextAppearance_Material3_LabelMedium
+                )
+            })
+            row.addView(TextView(this).apply {
+                text = value
+                setTextAppearance(
+                    com.google.android.material.R.style.TextAppearance_Material3_TitleMedium
+                )
+                setPadding(0, (2 * density).toInt(), 0, 0)
+            })
+            container.addView(row)
+        }
+    }
+
+    /**
+     * Labeled (label, value) rows for the back face, in display order.
+     * Blank values are skipped — the face shows only what's actually there.
+     */
+    private fun dataRows(card: QrCard): List<Pair<String, String>> {
+        val f = card.fields
+        fun v(key: String) = f[key].orEmpty().trim()
+        fun rows(vararg pairs: Pair<String, String>) =
+            pairs.filter { it.second.isNotBlank() }
+        return when (card.type) {
+            CardType.CONTACT -> {
+                val name = listOf(v("firstName"), v("lastName"))
+                    .filter { it.isNotEmpty() }.joinToString(" ")
+                rows(
+                    getString(R.string.field_name) to name,
+                    getString(R.string.field_organization) to v("organization"),
+                    getString(R.string.field_phone) to v("phone"),
+                    getString(R.string.field_email) to v("email"),
+                    getString(R.string.field_website) to v("website"),
+                )
+            }
+            CardType.WIFI -> rows(
+                getString(R.string.field_ssid) to v("ssid"),
+                getString(R.string.field_password) to v("password"),
+            )
+            CardType.URL -> {
+                val service = v("service")
+                rows(
+                    getString(R.string.field_service) to
+                        service.replaceFirstChar { it.uppercase() },
+                    getString(R.string.field_url) to v("url"),
+                )
+            }
+            CardType.LOCATION -> rows(
+                getString(R.string.field_latitude) to v("latitude"),
+                getString(R.string.field_longitude) to v("longitude"),
+            )
+            CardType.TEXT -> rows(getString(R.string.field_text) to v("content"))
+            CardType.EMAIL -> rows(
+                getString(R.string.field_email_address) to v("address"),
+                getString(R.string.field_subject) to v("subject"),
+                getString(R.string.field_body) to v("body"),
+            )
+            CardType.PHONE -> rows(getString(R.string.field_number) to v("number"))
+            CardType.SMS -> rows(
+                getString(R.string.field_number) to v("number"),
+                getString(R.string.field_message) to v("message"),
+            )
+            CardType.CALENDAR_EVENT -> rows(
+                getString(R.string.field_title) to v("title"),
+                getString(R.string.field_starts) to formatIsoDateTime(v("start")),
+                getString(R.string.field_ends) to formatIsoDateTime(v("end")),
+                getString(R.string.field_location) to v("location"),
+            )
+        }
+    }
+
+    private fun formatIsoDateTime(iso: String): String {
+        if (iso.isBlank()) return ""
+        return runCatching {
+            java.time.LocalDateTime.parse(iso).format(
+                java.time.format.DateTimeFormatter.ofPattern("EEE, MMM d, yyyy h:mm a")
+            )
+        }.getOrDefault(iso)
     }
 
     // -- card flip --
@@ -306,16 +431,38 @@ class CardDetailActivity : AppCompatActivity() {
     // -- vCard --
 
     /**
-     * Shares the card's vCard 3.0 payload as text/x-vcard. Only offered for
-     * contact cards — for every other type the payload isn't a vCard.
+     * Shares the card's vCard 3.0 payload as a real .vcf file with the
+     * text/vcard MIME type, so receiving apps recognize it as a contact and
+     * offer "add contact". Only offered for contact cards — for every
+     * other type the payload isn't a vCard. Falls back to the old
+     * text/x-vcard text extra if the file share can't be built.
      */
     private fun shareVcard() {
         val current = card ?: return
-        val send = Intent(Intent.ACTION_SEND).apply {
-            type = "text/x-vcard"
-            putExtra(Intent.EXTRA_TEXT, current.payload)
+        try {
+            val dir = File(cacheDir, "shared").apply { mkdirs() }
+            val file = File(dir, "contact-${current.id}.vcf")
+            FileOutputStream(file).use { out ->
+                out.write(current.payload.toByteArray(Charsets.UTF_8))
+            }
+            val uri = FileProvider.getUriForFile(
+                this, "${packageName}.fileprovider", file
+            )
+            val send = Intent(Intent.ACTION_SEND).apply {
+                type = "text/vcard"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                putExtra(Intent.EXTRA_SUBJECT, current.name)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(send, getString(R.string.share_vcard)))
+        } catch (e: Exception) {
+            android.util.Log.e("CardDetailActivity", "vCard file share failed", e)
+            val send = Intent(Intent.ACTION_SEND).apply {
+                type = "text/x-vcard"
+                putExtra(Intent.EXTRA_TEXT, current.payload)
+            }
+            startActivity(Intent.createChooser(send, getString(R.string.share_vcard)))
         }
-        startActivity(Intent.createChooser(send, getString(R.string.share_vcard)))
     }
 
     private fun qrDisplaySize(): Int {
