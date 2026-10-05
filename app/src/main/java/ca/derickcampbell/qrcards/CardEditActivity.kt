@@ -1271,10 +1271,13 @@ class CardEditActivity : AppCompatActivity() {
                     urlField?.setSelection(template.prefix.length)
                     urlField?.requestFocus()
                     serviceTemplate = template.id
-                    // Name the card after the service — but only when the
-                    // name field is still empty; never overwrite what the
-                    // user typed.
-                    if (binding.cardNameInput.text.isNullOrBlank()) {
+                    // Name the card after the service — when the name field is
+                    // blank, or when it still holds a name a social template
+                    // placed there (so switching services updates it). Never
+                    // overwrite a name the user typed themselves.
+                    val currentName = binding.cardNameInput.text?.toString().orEmpty()
+                    val autoNames = socialTemplates.map { it.displayName }.toSet()
+                    if (currentName.isBlank() || currentName in autoNames) {
                         binding.cardNameInput.setText(template.displayName)
                     }
                     formDirty = true

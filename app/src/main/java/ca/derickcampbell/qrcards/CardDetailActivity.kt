@@ -202,8 +202,10 @@ class CardDetailActivity : AppCompatActivity() {
         // The toolbar names the card; no second name label below the card.
         binding.toolbar.title = current.name
         // vCard actions only make sense for contact cards.
-        binding.vcardRow.visibility =
+        val vcardVisibility =
             if (current.type == CardType.CONTACT) View.VISIBLE else View.GONE
+        binding.shareVcardButton.visibility = vcardVisibility
+        binding.saveVcardButton.visibility = vcardVisibility
         flipAnimating = false
         applyFace()
     }
