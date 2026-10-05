@@ -12,10 +12,10 @@
         app:navigationIcon="@drawable/ic_arrow_back" />
 
     <!-- Tappable card: front shows the QR, back shows the card's details.
-         Tapping flips between them (instant swap when the system's
-         reduced-motion setting is on). Every non-interactive layer of the
-         back face carries the flip tap — a tap anywhere on the card
-         toggles, both directions. -->
+         Tapping anywhere on the card flips between the two faces (instant
+         swap when the system's reduced-motion setting is on). Every
+         non-interactive view on the back face carries the flip tap — text,
+         rows, and empty space all toggle back to the QR. -->
     <FrameLayout
         android:id="@+id/qrFlipContainer"
         android:layout_width="match_parent"
@@ -62,19 +62,21 @@
                     android:layout_height="wrap_content"
                     android:orientation="vertical" />
             </ScrollView>
-            <!-- No copy button here: the action row below holds the single
+            <!-- No copy button here: the action rows below hold the single
                  Copy, so there is exactly one Copy affordance per face. -->
         </LinearLayout>
     </FrameLayout>
 
-    <!-- Content actions as icon buttons: one row, every button a fixed 56dp
-         square so one-icon and two-icon buttons are the same size.
-         Order groups like actions: Copy, Share PNG, Share vCard (shares),
-         then Export SVG, Save .vcf (downloads). The vCard pair shows only
-         for contact cards. Each button carries its label as content
-         description + tooltip; inner icons are decorative. -->
+    <!-- Content actions as oval icon buttons, in two grouped rows with
+         generous whitespace so the targets are easy to discriminate.
+         Top row: Copy + the saves (Export SVG, Save .vcf).
+         Middle row: the shares (Share PNG, Share vCard).
+         Every button is a fixed 56dp square with a stadium background, so
+         one-icon and two-icon buttons are the same size. The vCard pair
+         shows only for contact cards. Each button carries its label as
+         content description + tooltip; inner icons are decorative. -->
     <LinearLayout
-        android:id="@+id/actionRow"
+        android:id="@+id/actionRowTop"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:gravity="center"
@@ -85,8 +87,8 @@
             android:id="@+id/copyPayloadButton"
             android:layout_width="56dp"
             android:layout_height="56dp"
-            android:layout_marginEnd="4dp"
-            android:background="?attr/selectableItemBackgroundBorderless"
+            android:layout_marginEnd="12dp"
+            android:background="@drawable/bg_oval_button"
             android:clickable="true"
             android:focusable="true"
             android:contentDescription="@string/copy"
@@ -102,80 +104,11 @@
         </FrameLayout>
 
         <FrameLayout
-            android:id="@+id/sharePngButton"
-            android:layout_width="56dp"
-            android:layout_height="56dp"
-            android:layout_marginEnd="4dp"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:clickable="true"
-            android:focusable="true"
-            android:contentDescription="@string/share_png"
-            android:tooltipText="@string/share_png">
-
-            <LinearLayout
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_gravity="center"
-                android:orientation="horizontal">
-
-                <ImageView
-                    android:layout_width="22dp"
-                    android:layout_height="22dp"
-                    android:layout_marginEnd="4dp"
-                    android:contentDescription="@null"
-                    android:src="@drawable/ic_share"
-                    app:tint="?attr/colorOnSurfaceVariant" />
-
-                <ImageView
-                    android:layout_width="22dp"
-                    android:layout_height="22dp"
-                    android:contentDescription="@null"
-                    android:src="@drawable/ic_image"
-                    app:tint="?attr/colorOnSurfaceVariant" />
-            </LinearLayout>
-        </FrameLayout>
-
-        <FrameLayout
-            android:id="@+id/shareVcardButton"
-            android:layout_width="56dp"
-            android:layout_height="56dp"
-            android:layout_marginEnd="4dp"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:clickable="true"
-            android:focusable="true"
-            android:contentDescription="@string/share_vcard"
-            android:tooltipText="@string/share_vcard"
-            android:visibility="gone">
-
-            <LinearLayout
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_gravity="center"
-                android:orientation="horizontal">
-
-                <ImageView
-                    android:layout_width="22dp"
-                    android:layout_height="22dp"
-                    android:layout_marginEnd="4dp"
-                    android:contentDescription="@null"
-                    android:src="@drawable/ic_share"
-                    app:tint="?attr/colorOnSurfaceVariant" />
-
-                <ImageView
-                    android:layout_width="22dp"
-                    android:layout_height="22dp"
-                    android:contentDescription="@null"
-                    android:src="@drawable/ic_type_contact"
-                    app:tint="?attr/colorOnSurfaceVariant" />
-            </LinearLayout>
-        </FrameLayout>
-
-        <FrameLayout
             android:id="@+id/exportSvgButton"
             android:layout_width="56dp"
             android:layout_height="56dp"
-            android:layout_marginEnd="4dp"
-            android:background="?attr/selectableItemBackgroundBorderless"
+            android:layout_marginEnd="12dp"
+            android:background="@drawable/bg_oval_button"
             android:clickable="true"
             android:focusable="true"
             android:contentDescription="@string/export_svg"
@@ -208,7 +141,7 @@
             android:id="@+id/saveVcardButton"
             android:layout_width="56dp"
             android:layout_height="56dp"
-            android:background="?attr/selectableItemBackgroundBorderless"
+            android:background="@drawable/bg_oval_button"
             android:clickable="true"
             android:focusable="true"
             android:contentDescription="@string/save_vcf"
@@ -239,6 +172,83 @@
         </FrameLayout>
     </LinearLayout>
 
+    <LinearLayout
+        android:id="@+id/actionRowMiddle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:orientation="horizontal"
+        android:paddingTop="12dp">
+
+        <FrameLayout
+            android:id="@+id/sharePngButton"
+            android:layout_width="56dp"
+            android:layout_height="56dp"
+            android:layout_marginEnd="12dp"
+            android:background="@drawable/bg_oval_button"
+            android:clickable="true"
+            android:focusable="true"
+            android:contentDescription="@string/share_png"
+            android:tooltipText="@string/share_png">
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:orientation="horizontal">
+
+                <ImageView
+                    android:layout_width="22dp"
+                    android:layout_height="22dp"
+                    android:layout_marginEnd="4dp"
+                    android:contentDescription="@null"
+                    android:src="@drawable/ic_share"
+                    app:tint="?attr/colorOnSurfaceVariant" />
+
+                <ImageView
+                    android:layout_width="22dp"
+                    android:layout_height="22dp"
+                    android:contentDescription="@null"
+                    android:src="@drawable/ic_image"
+                    app:tint="?attr/colorOnSurfaceVariant" />
+            </LinearLayout>
+        </FrameLayout>
+
+        <FrameLayout
+            android:id="@+id/shareVcardButton"
+            android:layout_width="56dp"
+            android:layout_height="56dp"
+            android:background="@drawable/bg_oval_button"
+            android:clickable="true"
+            android:focusable="true"
+            android:contentDescription="@string/share_vcard"
+            android:tooltipText="@string/share_vcard"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:orientation="horizontal">
+
+                <ImageView
+                    android:layout_width="22dp"
+                    android:layout_height="22dp"
+                    android:layout_marginEnd="4dp"
+                    android:contentDescription="@null"
+                    android:src="@drawable/ic_share"
+                    app:tint="?attr/colorOnSurfaceVariant" />
+
+                <ImageView
+                    android:layout_width="22dp"
+                    android:layout_height="22dp"
+                    android:contentDescription="@null"
+                    android:src="@drawable/ic_type_contact"
+                    app:tint="?attr/colorOnSurfaceVariant" />
+            </LinearLayout>
+        </FrameLayout>
+    </LinearLayout>
+
     <!-- Management actions: Edit and Delete live in their own row at the
          bottom, separate from the content actions above. -->
     <LinearLayout
@@ -247,7 +257,7 @@
         android:gravity="center"
         android:orientation="horizontal"
         android:paddingBottom="24dp"
-        android:paddingTop="8dp">
+        android:paddingTop="12dp">
 
         <Button
             android:id="@+id/editButton"

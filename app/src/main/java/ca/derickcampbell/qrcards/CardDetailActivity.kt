@@ -9,6 +9,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -53,6 +54,8 @@ class CardDetailActivity : AppCompatActivity() {
     private var showingData = false
     private var flipAnimating = false
     private var originalBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+    /** Tap anywhere on the card toggles the flip, both directions. */
+    private val flipTap = View.OnClickListener { flipCard() }
 
     private val svgExportLauncher = registerForActivityResult(
         ActivityResultContracts.CreateDocument("image/svg+xml")
@@ -112,14 +115,13 @@ class CardDetailActivity : AppCompatActivity() {
         binding.qrDataView.cameraDistance = cameraDistance
 
         binding.toolbar.setNavigationOnClickListener { finish() }
-        // Tap toggles both directions, on either face. The back face's
-        // scroll and row containers carry the tap too: a ScrollView eats
-        // taps on its own area, which used to make the flip one-way.
-        val flipTap = View.OnClickListener { flipCard() }
+        // Tap toggles both directions, on either face. The back face is
+        // rebuilt dynamically (data rows), so the flip tap is attached
+        // recursively to every non-interactive view on it — text, rows, and
+        // empty space all flip back to the QR. Views that already do
+        // something (scrolling, buttons) are left alone.
         binding.qrFlipContainer.setOnClickListener(flipTap)
-        binding.qrDataView.setOnClickListener(flipTap)
-        binding.dataScroll.setOnClickListener(flipTap)
-        binding.dataRows.setOnClickListener(flipTap)
+        attachFlipEverywhere(binding.qrDataView, flipTap)
         binding.sharePngButton.setOnClickListener { sharePng() }
         binding.exportSvgButton.setOnClickListener {
             card?.let { svgExportLauncher.launch(exportFileName(it, "svg")) }
@@ -254,6 +256,9 @@ class CardDetailActivity : AppCompatActivity() {
             // sensitive card's payload never sits in the view before
             // confirmation.
             buildDataFace(current)
+            // The data rows are rebuilt, so re-attach the flip tap to the
+            // new row views: tapping any of them flips back to the QR.
+            attachFlipEverywhere(binding.dataRows, flipTap)
         } catch (e: Exception) {
             Toast.makeText(this, R.string.render_failed, Toast.LENGTH_LONG).show()
             finish()
@@ -377,6 +382,23 @@ class CardDetailActivity : AppCompatActivity() {
     }
 
     // -- card flip --
+
+    /**
+     * Attaches the flip tap to every non-interactive view under [root]:
+     * labels, value rows, and empty space on the back face all toggle back
+     * to the QR. Views that already do something (clickable) are left alone
+     * so scrolling keeps working; the action buttons live outside this tree.
+     */
+    private fun attachFlipEverywhere(root: View, flipTap: View.OnClickListener) {
+        if (root is ViewGroup) {
+            for (i in 0 until root.childCount) {
+                attachFlipEverywhere(root.getChildAt(i), flipTap)
+            }
+        }
+        if (!root.isClickable && !root.isLongClickable) {
+            root.setOnClickListener(flipTap)
+        }
+    }
 
     /**
      * Tapping the card flips it between the QR face and the encoded-data
