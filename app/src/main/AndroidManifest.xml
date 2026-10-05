@@ -39,6 +39,20 @@
                 <data android:mimeType="text/x-vcard" />
                 <data android:mimeType="text/vcard" />
             </intent-filter>
+            <!-- Tapping a .qrcards backup file offers QR Cards: the file is
+                 imported through the same flow as in-app import (encrypted
+                 backups ask for the password first). Extension-based match:
+                 file managers report these files under various MIME types,
+                 so the match is on the path, not the type. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:host="*" />
+                <data android:pathPattern=".*\\.qrcards" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
         </activity>
         <!-- Present mode. Exported so launcher app-shortcuts can deep-link here. -->
         <activity

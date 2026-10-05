@@ -763,6 +763,8 @@ class CardEditActivity : AppCompatActivity() {
                 addTextField("firstName", getString(R.string.field_first_name), f("firstName"))
                 addTextField("lastName", getString(R.string.field_last_name), f("lastName"))
                 addTextField("organization", getString(R.string.field_organization), f("organization"))
+                addTextField("jobTitle", getString(R.string.field_job_title), f("jobTitle"))
+                addTextField("address", getString(R.string.field_address), f("address"))
                 addOptionField(
                     "phone", getString(R.string.field_phone), f("phone"),
                     InputType.TYPE_CLASS_PHONE
@@ -895,6 +897,7 @@ class CardEditActivity : AppCompatActivity() {
         inputType: Int,
     ): MaterialAutoCompleteTextView {
         val density = resources.displayMetrics.density
+        val hasOptions = (optionLists[key]?.size ?: 0) > 1
         val til = TextInputLayout(this).apply {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
@@ -902,6 +905,10 @@ class CardEditActivity : AppCompatActivity() {
             ).apply { topMargin = (8 * density).toInt() }
             hint = label
             boxBackgroundMode = TextInputLayout.BOX_BACKGROUND_OUTLINE
+            // Set BEFORE the EditText is attached: the end icon changes the
+            // content padding, and setting it after addView leaves the text
+            // inset wrong (it used to crash outright on a plain EditText).
+            if (hasOptions) endIconMode = TextInputLayout.END_ICON_DROPDOWN_MENU
         }
         // MaterialAutoCompleteTextView, not TextInputEditText: the exposed
         // dropdown end icon (shown when an import yields 2+ numbers/emails)
@@ -912,8 +919,7 @@ class CardEditActivity : AppCompatActivity() {
             setText(currentOptionValue(key, prefill))
         }
         til.addView(edit)
-        if ((optionLists[key]?.size ?: 0) > 1) {
-            til.endIconMode = TextInputLayout.END_ICON_DROPDOWN_MENU
+        if (hasOptions) {
             til.setEndIconOnClickListener { showOptionPicker(key, label) }
         }
         binding.formContainer.addView(til)
@@ -1107,6 +1113,8 @@ class CardEditActivity : AppCompatActivity() {
         val firstName: String,
         val lastName: String,
         val organization: String,
+        val jobTitle: String,
+        val address: String,
         val phones: List<FieldOption>,
         val emails: List<FieldOption>,
         val website: String,
@@ -1152,30 +1160,44 @@ class CardEditActivity : AppCompatActivity() {
             val (firstName, lastName) = splitName(displayName)
             logImport("query", "name='$displayName' data: $dataUri")
 
-            val phones = readContactOptions(
-                cr, dataUri,
-                ContactsContract.CommonDataKinds.Phone.CONTENT_ITEM_TYPE,
-                ContactsContract.CommonDataKinds.Phone.NUMBER,
-                ContactsContract.CommonDataKinds.Phone.TYPE,
-                ContactsContract.CommonDataKinds.Phone.LABEL,
-            ) { type, label ->
-                ContactsContract.CommonDataKinds.Phone.getTypeLabel(resources, type, label)
-                    .toString()
-            }
-            val emails = readContactOptions(
-                cr, dataUri,
-                ContactsContract.CommonDataKinds.Email.CONTENT_ITEM_TYPE,
-                ContactsContract.CommonDataKinds.Email.ADDRESS,
-                ContactsContract.CommonDataKinds.Email.TYPE,
-                ContactsContract.CommonDataKinds.Email.LABEL,
-            ) { type, label ->
-                ContactsContract.CommonDataKinds.Email.getTypeLabel(resources, type, label)
-                    .toString()
-            }
+            val phones = dedupeOptions(
+                readContactOptions(
+                    cr, dataUri,
+                    ContactsContract.CommonDataKinds.Phone.CONTENT_ITEM_TYPE,
+                    ContactsContract.CommonDataKinds.Phone.NUMBER,
+                    ContactsContract.CommonDataKinds.Phone.TYPE,
+                    ContactsContract.CommonDataKinds.Phone.LABEL,
+                ) { type, label ->
+                    ContactsContract.CommonDataKinds.Phone.getTypeLabel(resources, type, label)
+                        .toString()
+                }
+            ) { normalizePhone(it.value) }
+            val emails = dedupeOptions(
+                readContactOptions(
+                    cr, dataUri,
+                    ContactsContract.CommonDataKinds.Email.CONTENT_ITEM_TYPE,
+                    ContactsContract.CommonDataKinds.Email.ADDRESS,
+                    ContactsContract.CommonDataKinds.Email.TYPE,
+                    ContactsContract.CommonDataKinds.Email.LABEL,
+                ) { type, label ->
+                    ContactsContract.CommonDataKinds.Email.getTypeLabel(resources, type, label)
+                        .toString()
+                }
+            ) { it.value.trim().lowercase() }
             val organization = readContactSingle(
                 cr, dataUri,
                 ContactsContract.CommonDataKinds.Organization.CONTENT_ITEM_TYPE,
                 ContactsContract.CommonDataKinds.Organization.COMPANY,
+            )
+            val jobTitle = readContactSingle(
+                cr, dataUri,
+                ContactsContract.CommonDataKinds.Organization.CONTENT_ITEM_TYPE,
+                ContactsContract.CommonDataKinds.Organization.TITLE,
+            )
+            val address = readContactSingle(
+                cr, dataUri,
+                ContactsContract.CommonDataKinds.StructuredPostal.CONTENT_ITEM_TYPE,
+                ContactsContract.CommonDataKinds.StructuredPostal.FORMATTED_ADDRESS,
             )
             val website = readContactSingle(
                 cr, dataUri,
@@ -1183,7 +1205,7 @@ class CardEditActivity : AppCompatActivity() {
                 ContactsContract.CommonDataKinds.Website.URL,
             )
             return ImportedContact(
-                firstName, lastName, organization, phones, emails, website
+                firstName, lastName, organization, jobTitle, address, phones, emails, website
             )
         } ?: run {
             logImport("query", "null cursor for $resolved")
@@ -1231,6 +1253,8 @@ class CardEditActivity : AppCompatActivity() {
                 "firstName" to imported.firstName,
                 "lastName" to imported.lastName,
                 "organization" to imported.organization,
+                "jobTitle" to imported.jobTitle,
+                "address" to imported.address,
                 "phone" to imported.phones.firstOrNull()?.value.orEmpty(),
                 "email" to imported.emails.firstOrNull()?.value.orEmpty(),
                 "website" to imported.website,
@@ -1268,6 +1292,36 @@ class CardEditActivity : AppCompatActivity() {
             runCatching { buildForm(prevType, prefillFor(prevType)) }
                 .onFailure { re -> logImport("apply", "restore also failed", re) }
             throw e
+        }
+    }
+
+    /**
+     * Normalized phone form for dedupe: digits only, keeping a leading +.
+     * "(306) 555-1234", "306-555-1234" and "3065551234" all become
+     * "3065551234", so minor formatting differences don't produce duplicate
+     * dropdown entries. The first (best-ranked) original formatting is kept
+     * for display.
+     */
+    private fun normalizePhone(raw: String): String {
+        val t = raw.trim()
+        val digits = t.filter { it.isDigit() }
+        return if (t.startsWith("+") && digits.isNotEmpty()) "+$digits" else digits
+    }
+
+    /**
+     * Drops options that are duplicates under [key], keeping the first
+     * occurrence (callers pass rank-sorted lists, so the primary number or
+     * email wins). An empty normalized key falls back to the raw value so
+     * digit-less entries never collapse into each other.
+     */
+    private fun dedupeOptions(
+        options: List<FieldOption>,
+        key: (FieldOption) -> String,
+    ): List<FieldOption> {
+        val seen = HashSet<String>()
+        return options.filter { option ->
+            val k = key(option).ifEmpty { option.value }
+            seen.add(k)
         }
     }
 
@@ -1771,7 +1825,9 @@ class CardEditActivity : AppCompatActivity() {
             fieldOptions = collectFieldOptions(fields),
             labelColor = selectedColor,
             qrColor = selectedQrColor,
-            sensitive = binding.sensitiveCheck.isChecked
+            sensitive = binding.sensitiveCheck.isChecked,
+            // Editing never unfiles: a card keeps its folder.
+            folderId = existing?.folderId
         )
         repository.save(card)
         Toast.makeText(this, R.string.card_saved, Toast.LENGTH_SHORT).show()
@@ -1815,6 +1871,8 @@ class CardEditActivity : AppCompatActivity() {
                 firstName = v("firstName"),
                 lastName = v("lastName"),
                 organization = v("organization"),
+                jobTitle = v("jobTitle"),
+                address = v("address"),
                 phone = v("phone"),
                 email = v("email"),
                 website = v("website")

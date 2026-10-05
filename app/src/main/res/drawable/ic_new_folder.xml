@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Toolbar action: folder with a plus badge for "New folder". -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@drawable/ic_folder" />
+    <item
+        android:width="12dp"
+        android:height="12dp"
+        android:gravity="bottom|end"
+        android:drawable="@drawable/ic_add" />
+</layer-list>

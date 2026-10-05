@@ -415,6 +415,8 @@ class CardDetailActivity : AppCompatActivity() {
                 rows(
                     row(getString(R.string.field_name), name),
                     row(getString(R.string.field_organization), v("organization")),
+                    row(getString(R.string.field_job_title), v("jobTitle")),
+                    row(getString(R.string.field_address), v("address")),
                     row(getString(R.string.field_phone), v("phone"), DataLink.PHONE),
                     row(getString(R.string.field_email), v("email"), DataLink.EMAIL),
                     row(getString(R.string.field_website), v("website"), DataLink.WEB),

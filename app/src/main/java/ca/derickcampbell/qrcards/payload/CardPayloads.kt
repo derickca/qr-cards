@@ -60,6 +60,8 @@ object CardPayloads {
         firstName: String,
         lastName: String = "",
         organization: String = "",
+        jobTitle: String = "",
+        address: String = "",
         phone: String = "",
         email: String = "",
         website: String = "",
@@ -71,6 +73,12 @@ object CardPayloads {
         lines += "N:${vcardEscape(lastName)};${vcardEscape(firstName)};;;"
         lines += "FN:${vcardEscape(fullName)}"
         if (organization.isNotBlank()) lines += "ORG:${vcardEscape(organization.trim())}"
+        if (jobTitle.isNotBlank()) lines += "TITLE:${vcardEscape(jobTitle.trim())}"
+        if (address.isNotBlank()) {
+            // Free-text address lands in the street component; scanners show
+            // it as the street line, which is the honest rendering.
+            lines += "ADR:;;${vcardEscape(address.trim())};;;;"
+        }
         if (phone.isNotBlank()) lines += "TEL;TYPE=CELL:${phone.trim()}"
         if (email.isNotBlank()) lines += "EMAIL;TYPE=HOME:${email.trim()}"
         if (website.isNotBlank()) lines += "URL:${url(website)}"

@@ -17,10 +17,12 @@ import androidx.recyclerview.widget.RecyclerView
 import ca.derickcampbell.qrcards.data.CardBackup
 import ca.derickcampbell.qrcards.data.CardRepository
 import ca.derickcampbell.qrcards.databinding.ActivityMainBinding
+import ca.derickcampbell.qrcards.model.CardFolder
 import ca.derickcampbell.qrcards.model.QrCard
 import ca.derickcampbell.qrcards.payload.ShareSniff
 import ca.derickcampbell.qrcards.ui.CardAdapter
 import ca.derickcampbell.qrcards.ui.CardShortcuts
+import ca.derickcampbell.qrcards.ui.LibraryRow
 import ca.derickcampbell.qrcards.ui.typeLabel
 import ca.derickcampbell.qrcards.widget.MyCardWidgetProvider
 import com.google.android.material.checkbox.MaterialCheckBox
@@ -43,6 +45,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var adapter: CardAdapter
     private lateinit var itemTouchHelper: ItemTouchHelper
     private var allCards: List<QrCard> = emptyList()
+    private var allFolders: List<CardFolder> = emptyList()
 
     // Password chosen in the export dialog; consumed by the launcher below.
     private var pendingExportPassword: CharArray? = null
@@ -86,20 +89,24 @@ class MainActivity : AppCompatActivity() {
         repository = CardRepository(this)
 
         adapter = CardAdapter(
-            onClick = { card ->
+            onCardClick = { card ->
                 startActivity(
                     Intent(this, CardDetailActivity::class.java)
                         .putExtra(CardDetailActivity.EXTRA_CARD_ID, card.id)
                 )
             },
+            onFolderToggle = { folder -> toggleFolder(folder) },
+            onFolderRename = { folder -> showFolderDialog(folder) },
             onStartDrag = { holder -> itemTouchHelper.startDrag(holder) },
         )
         binding.cardList.layoutManager = LinearLayoutManager(this)
         binding.cardList.adapter = adapter
 
-        // Manual ordering: drag by the handle. Persisted on drop via
-        // CardRepository.saveOrder — the JSON array order is the library
-        // order, so it survives backup/restore automatically.
+        // Manual ordering: drag by the handle. Folders drag with their
+        // children as one block; dropping a card onto a folder header files
+        // it inside. Persisted on drop via CardRepository.saveStructure —
+        // the JSON array order is the library order, so it survives
+        // backup/restore automatically.
         val dragCallback = object : ItemTouchHelper.SimpleCallback(
             ItemTouchHelper.UP or ItemTouchHelper.DOWN, 0
         ) {
@@ -119,8 +126,10 @@ class MainActivity : AppCompatActivity() {
                 recyclerView: RecyclerView, viewHolder: RecyclerView.ViewHolder
             ) {
                 super.clearView(recyclerView, viewHolder)
-                repository.saveOrder(adapter.currentIds())
+                persistOrderFromRows()
                 allCards = repository.list()
+                allFolders = repository.listFolders()
+                applyFilter(binding.searchInput.text?.toString().orEmpty())
                 CardShortcuts.refresh(this@MainActivity)
             }
         }
@@ -137,6 +146,10 @@ class MainActivity : AppCompatActivity() {
 
         binding.toolbar.setOnMenuItemClickListener { item ->
             when (item.itemId) {
+                R.id.action_new_folder -> {
+                    showFolderDialog(null)
+                    true
+                }
                 R.id.action_export_backup -> {
                     showExportDialog()
                     true
@@ -153,12 +166,30 @@ class MainActivity : AppCompatActivity() {
         }
 
         handleShareIntent(intent)
+        handleViewIntent(intent)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         handleShareIntent(intent)
+        handleViewIntent(intent)
+    }
+
+    /**
+     * Backup-file tap: a .qrcards file opened from a file manager arrives as
+     * ACTION_VIEW with the file URI. It goes through the same import flow as
+     * the in-app importer (password prompt for encrypted backups) — import
+     * replaces the library, exactly like the menu action does.
+     */
+    private fun handleViewIntent(intent: Intent) {
+        if (intent.action != Intent.ACTION_VIEW) return
+        val uri: Uri = intent.data ?: return
+        if (CardBackup.isEncryptedBackup(this, uri)) {
+            showImportPasswordDialog(uri)
+        } else {
+            doImport(uri, null)
+        }
     }
 
     /**
@@ -209,6 +240,148 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         refresh()
+    }
+
+    // -- folders --
+
+    /** Icon choices offered in the folder dialog: key → drawable. */
+    private val folderIcons = listOf(
+        "folder" to R.drawable.ic_folder,
+        "star" to R.drawable.ic_folder_star,
+        "home" to R.drawable.ic_folder_home,
+        "work" to R.drawable.ic_folder_work,
+    )
+
+    /**
+     * New-folder dialog, or rename when [existing] is given. Name field plus
+     * an icon picker row; renaming also offers delete (the folder's cards
+     * move back to the top level — never deleted).
+     */
+    private fun showFolderDialog(existing: CardFolder?) {
+        val density = resources.displayMetrics.density
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            val pad = (20 * density).toInt()
+            setPadding(pad, (4 * density).toInt(), pad, 0)
+        }
+        val nameLayout = TextInputLayout(this).apply {
+            hint = getString(R.string.folder_name_hint)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+        val nameInput = TextInputEditText(nameLayout.context).apply {
+            inputType = InputType.TYPE_CLASS_TEXT
+            setText(existing?.name.orEmpty())
+        }
+        nameLayout.addView(nameInput)
+        container.addView(nameLayout)
+
+        val iconLabel = android.widget.TextView(this).apply {
+            text = getString(R.string.folder_icon_label)
+            setTextAppearance(
+                com.google.android.material.R.style.TextAppearance_Material3_LabelMedium
+            )
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = (16 * density).toInt() }
+        }
+        container.addView(iconLabel)
+
+        val iconRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = (8 * density).toInt() }
+        }
+        var selectedIcon = existing?.icon ?: "folder"
+        if (folderIcons.none { it.first == selectedIcon }) selectedIcon = "folder"
+        val iconButtons = mutableListOf<android.widget.ImageButton>()
+        fun refreshIconSelection() {
+            iconButtons.forEachIndexed { index, button ->
+                val selected = folderIcons[index].first == selectedIcon
+                button.alpha = if (selected) 1f else 0.4f
+                button.background = if (selected) {
+                    getDrawable(R.drawable.dot_ring)
+                } else {
+                    getDrawable(R.drawable.dot_none)
+                }
+            }
+        }
+        folderIcons.forEach { (key, res) ->
+            val button = android.widget.ImageButton(this).apply {
+                setImageResource(res)
+                contentDescription = key
+                val size = (48 * density).toInt()
+                layoutParams = LinearLayout.LayoutParams(size, size).apply {
+                    marginEnd = (8 * density).toInt()
+                }
+                setOnClickListener {
+                    selectedIcon = key
+                    refreshIconSelection()
+                }
+            }
+            iconButtons += button
+            iconRow.addView(button)
+        }
+        container.addView(iconRow)
+        refreshIconSelection()
+
+        val builder = MaterialAlertDialogBuilder(this)
+            .setTitle(
+                if (existing == null) getString(R.string.new_folder_title)
+                else getString(R.string.rename_folder_title)
+            )
+            .setView(container)
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(
+                if (existing == null) R.string.create else R.string.save,
+                null,
+            )
+        if (existing != null) {
+            builder.setNeutralButton(R.string.delete) { _, _ ->
+                confirmDeleteFolder(existing)
+            }
+        }
+        val dialog = builder.create()
+        dialog.show()
+        // Validate before dismissing: the dialog stays open on an empty name.
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            val name = nameInput.text?.toString()?.trim().orEmpty()
+            if (name.isEmpty()) {
+                nameLayout.error = getString(R.string.folder_name_required)
+                return@setOnClickListener
+            }
+            if (existing == null) {
+                repository.saveFolder(
+                    CardFolder(id = "", name = name, icon = selectedIcon)
+                )
+            } else {
+                repository.saveFolder(
+                    existing.copy(name = name, icon = selectedIcon)
+                )
+            }
+            dialog.dismiss()
+            allFolders = repository.listFolders()
+            applyFilter(binding.searchInput.text?.toString().orEmpty())
+        }
+    }
+
+    private fun confirmDeleteFolder(folder: CardFolder) {
+        MaterialAlertDialogBuilder(this)
+            .setTitle(getString(R.string.delete_folder_title, folder.name))
+            .setMessage(R.string.delete_folder_message)
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(R.string.delete) { _, _ ->
+                repository.deleteFolder(folder.id)
+                allFolders = repository.listFolders()
+                allCards = repository.list()
+                applyFilter(binding.searchInput.text?.toString().orEmpty())
+            }
+            .show()
     }
 
     // -- backup export/import --
@@ -348,6 +521,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun refresh() {
         allCards = repository.list()
+        allFolders = repository.listFolders()
         applyFilter(binding.searchInput.text?.toString().orEmpty())
         // Every library change republishes the quick-access shortcuts and
         // refreshes widget buttons (names change, cards get deleted).
@@ -355,22 +529,83 @@ class MainActivity : AppCompatActivity() {
         MyCardWidgetProvider.updateAll(this)
     }
 
+    /**
+     * Derives the persisted library structure from the adapter's current
+     * row order: folder-header order, visible card order, and each visible
+     * card's containing folder (nearest preceding folder header, or null).
+     * Cards hidden inside collapsed folders keep their folder and relative
+     * order — a drag can never unfile or lose them.
+     */
+    private fun persistOrderFromRows() {
+        val folderIds = mutableListOf<String>()
+        val cardIds = mutableListOf<String>()
+        val folderOf = mutableMapOf<String, String?>()
+        var currentFolder: String? = null
+        for (row in adapter.currentRows()) {
+            when (row) {
+                is LibraryRow.FolderRow -> {
+                    folderIds += row.folder.id
+                    currentFolder = row.folder.id
+                }
+                is LibraryRow.CardRow -> {
+                    cardIds += row.card.id
+                    folderOf[row.card.id] = currentFolder
+                }
+            }
+        }
+        repository.saveStructure(folderIds, cardIds, folderOf)
+    }
+
+    /** Full library as rows: each folder header, its (expanded) cards, then top-level cards. */
+    private fun buildRows(cards: List<QrCard>): List<LibraryRow> {
+        val rows = mutableListOf<LibraryRow>()
+        val folderIds = allFolders.map { it.id }.toSet()
+        val byFolder = cards.groupBy { it.folderId }
+        for (folder in allFolders) {
+            rows += LibraryRow.FolderRow(folder)
+            if (!folder.collapsed) {
+                byFolder[folder.id].orEmpty().forEach { card ->
+                    rows += LibraryRow.CardRow(card, inFolder = true)
+                }
+            }
+        }
+        // Cards whose folder vanished (hand-edited backup) read as top-level
+        // here, and the next drag persists that fix.
+        cards.filter { it.folderId == null || it.folderId !in folderIds }
+            .forEach { rows += LibraryRow.CardRow(it, inFolder = false) }
+        return rows
+    }
+
+    private fun toggleFolder(folder: CardFolder) {
+        repository.setFolderCollapsed(folder.id, !folder.collapsed)
+        allFolders = repository.listFolders()
+        applyFilter(binding.searchInput.text?.toString().orEmpty())
+    }
+
     private fun applyFilter(query: String) {
         val q = query.trim().lowercase()
         // Drag handles only make sense on the full, unfiltered library.
         adapter.dragEnabled = q.isEmpty()
-        val filtered = if (q.isEmpty()) {
-            allCards
+        val rows: List<LibraryRow>
+        val empty: Boolean
+        if (q.isEmpty()) {
+            rows = buildRows(allCards)
+            empty = allCards.isEmpty() && allFolders.isEmpty()
         } else {
-            allCards.filter {
+            val filtered = allCards.filter {
                 it.name.lowercase().contains(q) ||
                     typeLabel(it.type, this).lowercase().contains(q)
             }
+            // Search flattens to matching cards; folders don't filter.
+            rows = filtered.map { LibraryRow.CardRow(it, inFolder = false) }
+            empty = filtered.isEmpty()
         }
-        adapter.submit(filtered)
-        if (filtered.isEmpty()) {
+        // Tighter rows once the list gets long — still breathing room.
+        adapter.compact = rows.size >= COMPACT_ROW_THRESHOLD
+        adapter.submit(rows)
+        if (empty) {
             binding.emptyView.visibility = View.VISIBLE
-            if (allCards.isEmpty()) {
+            if (allCards.isEmpty() && allFolders.isEmpty()) {
                 binding.emptyTitle.setText(R.string.no_cards)
                 binding.emptyHint.setText(R.string.no_cards_hint)
             } else {
@@ -380,5 +615,10 @@ class MainActivity : AppCompatActivity() {
         } else {
             binding.emptyView.visibility = View.GONE
         }
+    }
+
+    companion object {
+        /** Row count at which the library list switches to compact rows. */
+        private const val COMPACT_ROW_THRESHOLD = 8
     }
 }

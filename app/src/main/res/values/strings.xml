@@ -10,6 +10,18 @@
     <string name="no_results">No cards match your search.</string>
     <string name="menu_export_backup">Export backup</string>
     <string name="menu_import_backup">Import backup</string>
+    <string name="menu_new_folder">New folder</string>
+    <string name="new_folder_title">New folder</string>
+    <string name="rename_folder_title">Rename folder</string>
+    <string name="folder_name_hint">Folder name</string>
+    <string name="folder_name_required">Give the folder a name</string>
+    <string name="folder_icon_label">Icon</string>
+    <string name="create">Create</string>
+    <string name="delete_folder_title">Delete “%1$s”?</string>
+    <string name="delete_folder_message">The folder goes away, but its cards stay — they move back to the top level.</string>
+    <string name="expand_folder">Expand folder</string>
+    <string name="collapse_folder">Collapse folder</string>
+    <string name="reorder_folder">Reorder folder</string>
     <string name="backup_exported">Backup exported</string>
     <string name="backup_export_failed">Backup export failed: %1$s</string>
     <string name="backup_imported">Imported %1$d cards</string>
@@ -113,6 +125,8 @@
     <string name="field_first_name">First name</string>
     <string name="field_last_name">Last name</string>
     <string name="field_organization">Organization</string>
+    <string name="field_job_title">Job title</string>
+    <string name="field_address">Address</string>
     <string name="field_phone">Phone</string>
     <string name="field_email">Email</string>
     <string name="field_website">Website</string>

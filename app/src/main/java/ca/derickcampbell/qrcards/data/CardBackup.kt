@@ -103,18 +103,37 @@ object CardBackup {
                     ?: throw IllegalArgumentException("This doesn't look like a QR Cards backup file.")
             }
             val repo = CardRepository(context)
-            val cards = try {
-                val arr = JSONObject(jsonBytes.toString(Charsets.UTF_8)).getJSONArray("cards")
-                List(arr.length()) { i -> repo.fromJson(arr.getJSONObject(i)) }
+            val root = try {
+                JSONObject(jsonBytes.toString(Charsets.UTF_8))
             } catch (e: Exception) {
                 throw IllegalArgumentException("Not a valid QR Cards backup", e)
+            }
+            val arr = try {
+                root.getJSONArray("cards")
+            } catch (e: Exception) {
+                throw IllegalArgumentException("Not a valid QR Cards backup", e)
+            }
+            val cards = List(arr.length()) { i -> repo.fromJson(arr.getJSONObject(i)) }
+            // Folders are optional: backups written before folders existed
+            // have no "folders" array, and every card lands at top level.
+            val foldersArr = root.optJSONArray("folders")
+            val folders = if (foldersArr == null) emptyList()
+            else List(foldersArr.length()) { i ->
+                repo.folderFromJson(foldersArr.getJSONObject(i))
             }
             cards.forEach {
                 require(it.id.isNotBlank() && it.name.isNotBlank() && it.payload.isNotEmpty()) {
                     "Backup contains an invalid card"
                 }
             }
-            repo.replaceAll(cards)
+            // A card pointing at a folder that isn't in the backup (hand-
+            // edited file) goes top-level rather than vanishing.
+            val folderIds = folders.map { it.id }.toSet()
+            val saneCards = cards.map {
+                if (it.folderId != null && it.folderId !in folderIds) it.copy(folderId = null)
+                else it
+            }
+            repo.replaceAll(saneCards, folders)
             return cards.size
         } finally {
             staging.delete()

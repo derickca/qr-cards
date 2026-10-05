@@ -1,6 +1,7 @@
 package ca.derickcampbell.qrcards.data
 
 import android.content.Context
+import ca.derickcampbell.qrcards.model.CardFolder
 import ca.derickcampbell.qrcards.model.CardType
 import ca.derickcampbell.qrcards.model.FieldOption
 import ca.derickcampbell.qrcards.model.QrCard
@@ -45,7 +46,70 @@ class CardRepository(private val context: Context) {
 
     /** Replaces the whole library (used by backup restore). */
     @Synchronized
-    fun replaceAll(cards: List<QrCard>) = writeAll(cards)
+    fun replaceAll(cards: List<QrCard>, folders: List<CardFolder> = emptyList()) =
+        writeLibrary(cards, folders)
+
+    // -- folders --
+
+    @Synchronized
+    fun listFolders(): List<CardFolder> = readFolders()
+
+    /** Inserts or replaces by id. Generates an id when blank. */
+    @Synchronized
+    fun saveFolder(folder: CardFolder): CardFolder {
+        val withId =
+            if (folder.id.isBlank()) folder.copy(id = UUID.randomUUID().toString()) else folder
+        val folders = readFolders().filter { it.id != withId.id } + withId
+        writeLibrary(readAll(), folders)
+        return withId
+    }
+
+    /**
+     * Deletes a folder. Its cards are never deleted — they move back to the
+     * top level, keeping their relative order.
+     */
+    @Synchronized
+    fun deleteFolder(id: String) {
+        val cards = readAll().map { if (it.folderId == id) it.copy(folderId = null) else it }
+        writeLibrary(cards, readFolders().filter { it.id != id })
+    }
+
+    @Synchronized
+    fun setFolderCollapsed(id: String, collapsed: Boolean) {
+        writeLibrary(
+            readAll(),
+            readFolders().map { if (it.id == id) it.copy(collapsed = collapsed) else it }
+        )
+    }
+
+    /**
+     * Persists a manual reorder of the library list (drag-and-drop).
+     * [folderIds] is the folder-header order; [cardIds] the visible card
+     * order; [folderOf] maps card id → containing folder id (null = top
+     * level) for the cards that were visible. Cards that weren't visible
+     * (children of collapsed folders) keep their folder and relative order
+     * at the end, so a partial id list can never lose or unfile a card.
+     */
+    @Synchronized
+    fun saveStructure(
+        folderIds: List<String>,
+        cardIds: List<String>,
+        folderOf: Map<String, String?>,
+    ) {
+        val folders = readFolders()
+        val fById = folders.associateBy { it.id }
+        val wantedFolders = folderIds.toSet()
+        val newFolders =
+            folderIds.mapNotNull { fById[it] } + folders.filter { it.id !in wantedFolders }
+        val cards = readAll()
+        val cById = cards.associateBy { it.id }
+        val wantedCards = cardIds.toSet()
+        val newCards = cardIds.mapNotNull { id ->
+            val card = cById[id] ?: return@mapNotNull null
+            if (folderOf.containsKey(id)) card.copy(folderId = folderOf[id]) else card
+        } + cards.filter { it.id !in wantedCards }
+        writeLibrary(newCards, newFolders)
+    }
 
     /**
      * Persists a manual reorder (drag-and-drop in the library). Cards not in
@@ -58,7 +122,10 @@ class CardRepository(private val context: Context) {
         val all = readAll()
         val byId = all.associateBy { it.id }
         val wanted = ids.toSet()
-        writeAll(ids.mapNotNull { byId[it] } + all.filter { it.id !in wanted })
+        writeLibrary(
+            ids.mapNotNull { byId[it] } + all.filter { it.id !in wanted },
+            readFolders()
+        )
     }
 
     // -- persistence --
@@ -75,10 +142,28 @@ class CardRepository(private val context: Context) {
         }
     }
 
-    private fun writeAll(cards: List<QrCard>) {
-        val arr = JSONArray()
-        cards.forEach { arr.put(toJson(it)) }
-        file.writeText(JSONObject().put("cards", arr).toString())
+    private fun readFolders(): List<CardFolder> {
+        val f = file
+        if (!f.exists()) return emptyList()
+        return try {
+            val root = JSONObject(f.readText())
+            val arr = root.optJSONArray("folders") ?: JSONArray()
+            List(arr.length()) { i -> folderFromJson(arr.getJSONObject(i)) }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun writeAll(cards: List<QrCard>) = writeLibrary(cards, readFolders())
+
+    private fun writeLibrary(cards: List<QrCard>, folders: List<CardFolder>) {
+        val cardsArr = JSONArray()
+        cards.forEach { cardsArr.put(toJson(it)) }
+        val foldersArr = JSONArray()
+        folders.forEach { foldersArr.put(folderToJson(it)) }
+        file.writeText(
+            JSONObject().put("cards", cardsArr).put("folders", foldersArr).toString()
+        )
     }
 
     internal fun toJson(card: QrCard): JSONObject =
@@ -100,6 +185,7 @@ class CardRepository(private val context: Context) {
             .put("labelColor", card.labelColor)
             .put("sensitive", card.sensitive)
             .put("qrColor", card.qrColor)
+            .put("folderId", card.folderId)
 
     internal fun fromJson(o: JSONObject): QrCard {
         val fieldsObj = o.optJSONObject("fields") ?: JSONObject()
@@ -128,6 +214,23 @@ class CardRepository(private val context: Context) {
             sensitive = o.optBoolean("sensitive", false),
             // Absent in backups written before custom QR colors existed.
             qrColor = if (o.isNull("qrColor")) null else o.getInt("qrColor"),
+            // Absent in backups written before folders existed.
+            folderId = o.optString("folderId").ifEmpty { null },
         )
     }
+
+    internal fun folderToJson(folder: CardFolder): JSONObject =
+        JSONObject()
+            .put("id", folder.id)
+            .put("name", folder.name)
+            .put("icon", folder.icon)
+            .put("collapsed", folder.collapsed)
+
+    internal fun folderFromJson(o: JSONObject): CardFolder =
+        CardFolder(
+            id = o.getString("id"),
+            name = o.getString("name"),
+            icon = o.optString("icon").ifEmpty { "folder" },
+            collapsed = o.optBoolean("collapsed", false),
+        )
 }

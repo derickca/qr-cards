@@ -37,6 +37,29 @@ data class QrCard(
      * Palette is dark-only so codes stay scannable.
      */
     val qrColor: Int? = null,
+    /**
+     * Id of the containing [CardFolder], or null for top-level cards.
+     * Absent in backups written before folders existed.
+     */
+    val folderId: String? = null,
+)
+
+/**
+ * A named, collapsible group in the card library. Folders only organize —
+ * they carry no QR payload of their own. Deleting a folder never deletes
+ * its cards; they move back to the top level.
+ */
+data class CardFolder(
+    val id: String,
+    /** User-visible name, e.g. "Work", "Travel". */
+    val name: String,
+    /**
+     * Icon key, one of "folder", "star", "home", "work". Unknown keys fall
+     * back to "folder" so a backup from a newer app never breaks this one.
+     */
+    val icon: String = "folder",
+    /** When true the folder's cards are hidden in the library list. */
+    val collapsed: Boolean = false,
 )
 
 /** One labelled value among several options for a field. */
