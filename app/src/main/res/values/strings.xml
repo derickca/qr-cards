@@ -52,6 +52,9 @@
     <string name="import_from_contacts">Import from contacts</string>
     <string name="contact_import_failed">Couldn\'t read that contact</string>
     <string name="contact_import_failed_detail">Couldn\'t read that contact (%1$s: %2$s: %3$s)</string>
+    <string name="import_error_title">Contact import failed</string>
+    <string name="import_error_tap">Tap for details</string>
+    <string name="dismiss">Dismiss</string>
     <string name="switch_type_failed">Couldn\'t switch card type</string>
 
     <!-- Detail / present mode -->

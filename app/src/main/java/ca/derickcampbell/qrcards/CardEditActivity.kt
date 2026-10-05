@@ -1,5 +1,8 @@
 package ca.derickcampbell.qrcards
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.content.res.ColorStateList
 import android.graphics.Color
@@ -189,6 +192,8 @@ class CardEditActivity : AppCompatActivity() {
     // request — the permission is not re-requested in a loop.
     private var pendingContactUri: Uri? = null
     private var contactsPermissionAsked = false
+    /** Full text of the last import failure, shown in the on-page error card. */
+    private var lastImportError: String? = null
     private val requestContactsPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             val uri = pendingContactUri
@@ -288,6 +293,14 @@ class CardEditActivity : AppCompatActivity() {
         // Registered last so prefills and restores never mark the form dirty.
         binding.cardNameInput.doOnTextChanged { _, _, _, _ -> formDirty = true }
         binding.sensitiveCheck.setOnCheckedChangeListener { _, _ -> formDirty = true }
+        // Import diagnostics: the error card is hidden until an import fails.
+        binding.importErrorHeader.setOnClickListener { toggleImportErrorDetail() }
+        binding.importErrorCopy.setOnClickListener { copyImportError() }
+        binding.importErrorDismiss.setOnClickListener {
+            lastImportError = null
+            refreshImportErrorCard()
+        }
+        refreshImportErrorCard()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -299,6 +312,7 @@ class CardEditActivity : AppCompatActivity() {
         outState.putString("cardName", binding.cardNameInput.text?.toString().orEmpty())
         outState.putBoolean("sensitive", binding.sensitiveCheck.isChecked)
         outState.putBoolean("formDirty", formDirty)
+        outState.putString("lastImportError", lastImportError)
         val cache = HashMap<String, HashMap<String, String>>()
         typeFieldCache.forEach { (type, fields) -> cache[type.name] = HashMap(fields) }
         outState.putSerializable("typeFieldCache", cache)
@@ -329,6 +343,8 @@ class CardEditActivity : AppCompatActivity() {
         lists?.forEach { (key, options) -> optionLists[key] = options.toMutableList() }
         val sel = state.getSerializable("optionSelection") as? HashMap<String, Int>
         sel?.forEach { (key, index) -> optionSelection[key] = index }
+        lastImportError = state.getString("lastImportError")
+        binding.importErrorText.text = lastImportError.orEmpty()
     }
 
     // -- form data preservation --
@@ -688,6 +704,7 @@ class CardEditActivity : AppCompatActivity() {
 
     private fun buildForm(type: CardType, prefill: Map<String, String>?) {
         binding.formContainer.removeAllViews()
+        refreshImportErrorCard()
         fieldLayouts.clear()
         hiddenCheck = null
         dateTimeValues.clear()
@@ -956,6 +973,9 @@ class CardEditActivity : AppCompatActivity() {
     private fun importContact(contactUri: Uri) {
         val hasPermission = hasReadContactsPermission()
         var step = "start"
+        // Fresh attempt clears any previous failure from the diagnostics card.
+        lastImportError = null
+        refreshImportErrorCard()
         logImport(
             "start",
             "uri=$contactUri permissionAsked=$contactsPermissionAsked " +
@@ -983,21 +1003,37 @@ class CardEditActivity : AppCompatActivity() {
                 pendingContactUri = contactUri
                 requestContactsPermission.launch(android.Manifest.permission.READ_CONTACTS)
             } else {
-                showImportError("blocked", e)
+                showImportError("blocked", e, contactUri)
             }
         } catch (e: Exception) {
-            showImportError(step, e)
+            showImportError(step, e, contactUri)
         }
     }
 
     /**
-     * The failure toast names the step and the exception, so a stuck import
-     * can be reported exactly ("read: SecurityException: ...") instead of
-     * guessing. The step logs in logcat carry the full detail.
+     * The failure toast names the step and the exception, and the full
+     * detail (step, exception, message, URI, stack trace) lands on the
+     * on-page diagnostics card — hidden until tapped, with a copy button —
+     * so a truncated toast never hides the actual error again.
      */
-    private fun showImportError(step: String, e: Throwable) {
+    private fun showImportError(step: String, e: Throwable, uri: Uri?) {
         logImport("failed", "step=$step ${e.javaClass.simpleName}: ${e.message}", e)
         contactsPermissionAsked = false
+        val time = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+            .format(LocalDateTime.now())
+        lastImportError = buildString {
+            appendLine("step: $step")
+            appendLine("exception: ${e.javaClass.name}")
+            appendLine("message: ${e.message ?: "?"}")
+            if (uri != null) appendLine("uri: $uri")
+            appendLine("time: $time")
+            appendLine()
+            appendLine(android.util.Log.getStackTraceString(e))
+        }.trimEnd()
+        binding.importErrorText.text = lastImportError
+        binding.importErrorDetail.visibility = View.GONE
+        binding.importErrorChevron.setImageResource(R.drawable.ic_chevron_down)
+        refreshImportErrorCard()
         Toast.makeText(
             this,
             getString(
@@ -1006,6 +1042,34 @@ class CardEditActivity : AppCompatActivity() {
             ),
             Toast.LENGTH_LONG
         ).show()
+    }
+
+    /**
+     * The diagnostics card only belongs on the Contact form: it appears
+     * when an import fails and hides on type switch, dismiss, or a fresh
+     * import attempt.
+     */
+    private fun refreshImportErrorCard() {
+        val show = currentType == CardType.CONTACT && lastImportError != null
+        binding.importErrorCard.visibility = if (show) View.VISIBLE else View.GONE
+        if (!show) binding.importErrorDetail.visibility = View.GONE
+    }
+
+    private fun toggleImportErrorDetail() {
+        val detail = binding.importErrorDetail
+        val expanding = detail.visibility != View.VISIBLE
+        detail.visibility = if (expanding) View.VISIBLE else View.GONE
+        binding.importErrorChevron.setImageResource(
+            if (expanding) R.drawable.ic_chevron_up else R.drawable.ic_chevron_down
+        )
+    }
+
+    private fun copyImportError() {
+        val text = binding.importErrorText.text.toString()
+        if (text.isBlank()) return
+        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        cm.setPrimaryClip(ClipData.newPlainText("contact import error", text))
+        Toast.makeText(this, R.string.copied, Toast.LENGTH_SHORT).show()
     }
 
     /** One contact's imported data, read fully before touching the form. */
