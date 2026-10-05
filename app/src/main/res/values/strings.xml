@@ -51,6 +51,7 @@
     <string name="fewer_types">Less</string>
     <string name="import_from_contacts">Import from contacts</string>
     <string name="contact_import_failed">Couldn\'t read that contact</string>
+    <string name="contact_import_failed_detail">Couldn\'t read that contact (%1$s: %2$s: %3$s)</string>
     <string name="switch_type_failed">Couldn\'t switch card type</string>
 
     <!-- Detail / present mode -->
@@ -75,6 +76,9 @@
     <!-- Editor -->
     <string name="new_card">New card</string>
     <string name="edit_card">Edit card</string>
+    <string name="rename_title">Name changed</string>
+    <string name="rename_replace">Replace \u201c%1$s\u201d</string>
+    <string name="rename_create">Create \u201c%1$s\u201d</string>
     <string name="card_name">Card name</string>
     <string name="card_name_hint">e.g. Work contact</string>
     <string name="card_name_hint_url">e.g. My website</string>

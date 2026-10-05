@@ -46,8 +46,8 @@ data class FieldOption(
 ) : java.io.Serializable
 
 enum class CardType {
-    URL,
     CONTACT,
+    URL,
     WIFI,
     LOCATION,
     TEXT,

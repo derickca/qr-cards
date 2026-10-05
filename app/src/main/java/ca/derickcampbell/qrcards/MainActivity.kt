@@ -166,10 +166,21 @@ class MainActivity : AppCompatActivity() {
      * sniffed ([ShareSniff]) but the editor always opens for confirmation —
      * nothing is ever created silently. A blank share (or anything that
      * isn't text) gets a friendly note instead of a broken editor.
+     *
+     * Contact shares (e.g. from the Google Contacts app) arrive as a .vcf
+     * stream with type text/x-vcard rather than EXTRA_TEXT: the stream is
+     * read and fed through the same sniff path, so a shared contact lands
+     * as a Contact draft with its name pre-filled.
      */
     private fun handleShareIntent(intent: Intent) {
         if (intent.action != Intent.ACTION_SEND) return
-        val text = intent.getStringExtra(Intent.EXTRA_TEXT)?.trim().orEmpty()
+        var text = intent.getStringExtra(Intent.EXTRA_TEXT)?.trim().orEmpty()
+        if (text.isEmpty()) {
+            val stream: Uri? = androidx.core.content.IntentCompat.getParcelableExtra(
+                intent, Intent.EXTRA_STREAM, Uri::class.java
+            )
+            text = stream?.let { readStreamText(it) }?.trim().orEmpty()
+        }
         if (text.isEmpty()) {
             Toast.makeText(
                 this, R.string.share_text_only, Toast.LENGTH_LONG
@@ -186,6 +197,14 @@ class MainActivity : AppCompatActivity() {
                 )
         )
     }
+
+    /** Reads a shared stream (e.g. a .vcf) into text, best-effort. */
+    private fun readStreamText(uri: Uri): String =
+        runCatching {
+            contentResolver.openInputStream(uri)?.use { input ->
+                input.readBytes().toString(Charsets.UTF_8)
+            }
+        }.getOrNull().orEmpty()
 
     override fun onResume() {
         super.onResume()

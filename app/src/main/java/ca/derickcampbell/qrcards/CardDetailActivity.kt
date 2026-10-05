@@ -478,17 +478,17 @@ class CardDetailActivity : AppCompatActivity() {
     // -- vCard --
 
     /**
-     * Shares the card's vCard 3.0 payload as a real .vcf file. The MIME type
-     * is text/x-vcard — not text/vcard — deliberately: that is the platform
-     * convention the AOSP/Google Contacts app itself uses for ACTION_SEND
-     * contact shares, and it is what messaging apps register for. (Verified
-     * against the AOSP share path: sharing a contact from the system Contacts
-     * app sends ACTION_SEND with typ=text/x-vcard; Google Messages appears
-     * for that type but not for text/vcard.) The payload also rides along as
-     * EXTRA_TEXT in the same intent so text-only share targets appear in the
-     * chooser too; contact apps take the .vcf stream. Only offered for
-     * contact cards — for every other type the payload isn't a vCard. Falls
-     * back to a text-only share if the file share can't be built.
+     * Shares the card's vCard 3.0 payload as a real .vcf file, stream-only.
+     * The MIME type is text/x-vcard — not text/vcard — deliberately: that is
+     * the platform convention the AOSP/Google Contacts app itself uses for
+     * ACTION_SEND contact shares, and it is what messaging apps register
+     * for. (Verified against the AOSP share path: sharing a contact from the
+     * system Contacts app sends ACTION_SEND with typ=text/x-vcard; Google
+     * Messages appears for that type but not for text/vcard.) No EXTRA_TEXT:
+     * sending both made some apps show a contact embed plus all the text.
+     * Only offered for contact cards — for every other type the payload
+     * isn't a vCard. Falls back to a text-only share if the file share can't
+     * be built.
      */
     private fun shareVcard() {
         val current = card ?: return
@@ -506,10 +506,6 @@ class CardDetailActivity : AppCompatActivity() {
                 // previous text/vcard build hid SMS apps from the chooser.
                 type = "text/x-vcard"
                 putExtra(Intent.EXTRA_STREAM, uri)
-                // EXTRA_TEXT rides along so text-only share targets (like
-                // SMS apps) appear in the chooser too; contact apps take the
-                // .vcf stream.
-                putExtra(Intent.EXTRA_TEXT, current.payload)
                 putExtra(Intent.EXTRA_SUBJECT, current.name)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }

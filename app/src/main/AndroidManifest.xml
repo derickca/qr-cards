@@ -28,11 +28,16 @@
             </intent-filter>
             <!-- Share sheet target: shared text becomes a new card draft.
                  The editor always opens for confirmation — nothing is ever
-                 created silently. Images are declined with a friendly note. -->
+                 created silently. Images are declined with a friendly note.
+                 text/x-vcard (+text/vcard): contact shares from the system
+                 Contacts app arrive as a .vcf stream; the stream is read
+                 and parsed into a Contact draft. -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="text/plain" />
+                <data android:mimeType="text/x-vcard" />
+                <data android:mimeType="text/vcard" />
             </intent-filter>
         </activity>
         <!-- Present mode. Exported so launcher app-shortcuts can deep-link here. -->

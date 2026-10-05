@@ -120,6 +120,9 @@ object ShareSniff {
                         out["lastName"] = parts.lastOrNull().orEmpty()
                             .takeIf { parts.size > 1 }.orEmpty()
                     }
+                    // The card name for a shared contact: lifted out by the
+                    // editor into the name field (not an editor field).
+                    if (out["name"].isNullOrEmpty()) out["name"] = value.trim()
                 }
                 "N" -> {
                     // N:Last;First;;; — prefer over the FN guess when present.

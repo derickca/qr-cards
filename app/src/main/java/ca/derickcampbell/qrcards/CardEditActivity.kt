@@ -90,7 +90,7 @@ class CardEditActivity : AppCompatActivity() {
     private lateinit var binding: ActivityCardEditBinding
     private lateinit var repository: CardRepository
     private var editingCard: QrCard? = null
-    private var currentType: CardType = CardType.URL
+    private var currentType: CardType = CardType.CONTACT
 
     // Card-type tabs: one scrolling strip. tabSlotPx is measured after
     // layout; pendingTabScrollX restores the strip position on rotation.
@@ -240,9 +240,7 @@ class CardEditActivity : AppCompatActivity() {
             return
         }
 
-        binding.toolbar.title = getString(
-            if (editingCard == null) R.string.new_card else R.string.edit_card
-        )
+        binding.toolbar.title = ""
 
         val card = editingCard
         if (savedInstanceState != null) {
@@ -257,9 +255,15 @@ class CardEditActivity : AppCompatActivity() {
                 intent.getSerializableExtra(EXTRA_SHARE_FIELDS) as? HashMap<String, String>
             if (card == null && shareType != null) {
                 currentType = shareType
-                typeFieldCache[shareType] = HashMap(shareFields ?: emptyMap())
+                val fields = HashMap(shareFields ?: emptyMap())
+                // A shared vCard carries the contact's name for the card
+                // name field; it isn't an editor field, so lift it out.
+                val sharedName = fields.remove("name")
+                typeFieldCache[shareType] = fields
+                if (!sharedName.isNullOrBlank()) binding.cardNameInput.setText(sharedName)
             } else {
-                currentType = card?.type ?: CardType.URL
+                // New cards default to Contact — the most common card.
+                currentType = card?.type ?: CardType.CONTACT
             }
             card?.fieldOptions?.forEach { (key, options) ->
                 optionLists[key] = options.toMutableList()
@@ -308,7 +312,7 @@ class CardEditActivity : AppCompatActivity() {
     @Suppress("UNCHECKED_CAST")
     private fun restoreState(state: Bundle) {
         currentType = runCatching { CardType.valueOf(state.getString("currentType")!!) }
-            .getOrDefault(CardType.URL)
+            .getOrDefault(CardType.CONTACT)
         pendingTabScrollX = state.getInt("tabScrollX", -1)
         selectedColor = if (state.containsKey("selectedColor")) state.getInt("selectedColor") else null
         selectedQrColor = if (state.containsKey("selectedQrColor")) state.getInt("selectedQrColor") else null
@@ -920,22 +924,6 @@ class CardEditActivity : AppCompatActivity() {
 
     // -- contact import --
 
-    /**
-     * Imports the contact the user picked. The read and the form update are
-     * separate steps: the contact is read fully first, then applied to the
-     * Contact form in one go — so a successful import always lands every
-     * mapped field on screen, and a failed read never leaves a half-built
-     * form behind.
-     *
-     * The system picker grants one-time access to just this contact's URI,
-     * so every read goes through URIs derived from it — no contacts
-     * permission needed on most devices. When the grant doesn't cover the
-     * data rows (SecurityException), ask for the contacts permission once
-     * and retry; the error toast only appears for a genuine failure.
-     *
-     * Every phone number and email is kept (with its label); the primary one
-     * becomes the selected value.
-     */
     /** Step-scoped import logging: every phase logs under one tag so a
      * failed import is diagnosable from logcat ("contact-import [step]"). */
     private fun logImport(step: String, msg: String, e: Throwable? = null) {
@@ -967,40 +955,57 @@ class CardEditActivity : AppCompatActivity() {
      */
     private fun importContact(contactUri: Uri) {
         val hasPermission = hasReadContactsPermission()
+        var step = "start"
         logImport(
             "start",
             "uri=$contactUri permissionAsked=$contactsPermissionAsked " +
                 "hasReadContacts=$hasPermission"
         )
         try {
+            step = "read"
             val imported = readContact(contactUri, hasPermission)
+            step = "apply"
             applyImportedContact(imported)
             logImport(
                 "done",
                 "applied phones=${imported.phones.size} emails=${imported.emails.size}"
             )
         } catch (e: SecurityException) {
-            // The picker's one-time grant didn't cover the data rows: ask
-            // for the contacts permission once and retry the same contact.
-            logImport("blocked", "uri=$contactUri hasReadContacts=$hasPermission", e)
-            if (contactsPermissionAsked || hasPermission) {
-                // Already asked (or already held the permission) and still
-                // blocked: genuine failure — never re-request in a loop.
-                contactsPermissionAsked = false
-                Toast.makeText(this, R.string.contact_import_failed, Toast.LENGTH_SHORT).show()
-            } else {
+            // A SecurityException from the READ step means the picker's
+            // one-time grant didn't cover the data rows: ask for the
+            // contacts permission once and retry the same contact. One from
+            // the APPLY step (or after the permission was already
+            // granted/asked) is a genuine failure — never re-request in a
+            // loop, and never request for a non-read failure.
+            logImport("blocked", "step=$step uri=$contactUri hasReadContacts=$hasPermission", e)
+            if (step == "read" && !contactsPermissionAsked && !hasPermission) {
                 contactsPermissionAsked = true
                 pendingContactUri = contactUri
                 requestContactsPermission.launch(android.Manifest.permission.READ_CONTACTS)
+            } else {
+                showImportError("blocked", e)
             }
         } catch (e: Exception) {
-            logImport(
-                "failed",
-                "uri=$contactUri ${e.javaClass.simpleName}: ${e.message}", e
-            )
-            contactsPermissionAsked = false
-            Toast.makeText(this, R.string.contact_import_failed, Toast.LENGTH_SHORT).show()
+            showImportError(step, e)
         }
+    }
+
+    /**
+     * The failure toast names the step and the exception, so a stuck import
+     * can be reported exactly ("read: SecurityException: ...") instead of
+     * guessing. The step logs in logcat carry the full detail.
+     */
+    private fun showImportError(step: String, e: Throwable) {
+        logImport("failed", "step=$step ${e.javaClass.simpleName}: ${e.message}", e)
+        contactsPermissionAsked = false
+        Toast.makeText(
+            this,
+            getString(
+                R.string.contact_import_failed_detail,
+                step, e.javaClass.simpleName, e.message ?: "?"
+            ),
+            Toast.LENGTH_LONG
+        ).show()
     }
 
     /** One contact's imported data, read fully before touching the form. */
@@ -1622,6 +1627,47 @@ class CardEditActivity : AppCompatActivity() {
             if (matched != null) fields["service"] = matched.id
             else fields.remove("service")
         }
+        // Renaming an existing card is a choice: replace the old card with
+        // the edited version (under the new name), or keep the old card
+        // untouched and create a new one. Only asked when the name actually
+        // changed — otherwise saving stays a single tap.
+        if (existing != null && name != existing.name) {
+            askReplaceOrCreate(existing.name, name) { createNew ->
+                persistCard(name, fields, payload, if (createNew) null else existing)
+            }
+        } else {
+            persistCard(name, fields, payload, existing)
+        }
+    }
+
+    /**
+     * "Replace" updates the existing card with all edits, including the new
+     * name. "Create" leaves the old card alone and saves the edited content
+     * as a brand-new card (blank id → the repository generates one).
+     */
+    private fun askReplaceOrCreate(
+        oldName: String,
+        newName: String,
+        onChoice: (createNew: Boolean) -> Unit,
+    ) {
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.rename_title)
+            .setPositiveButton(getString(R.string.rename_replace, oldName)) { _, _ ->
+                onChoice(false)
+            }
+            .setNegativeButton(getString(R.string.rename_create, newName)) { _, _ ->
+                onChoice(true)
+            }
+            .setNeutralButton(R.string.cancel, null)
+            .show()
+    }
+
+    private fun persistCard(
+        name: String,
+        fields: Map<String, String>,
+        payload: String,
+        existing: QrCard?,
+    ) {
         val card = QrCard(
             id = existing?.id.orEmpty(), // blank → repository generates one
             name = name,
