@@ -433,9 +433,12 @@ class CardDetailActivity : AppCompatActivity() {
     /**
      * Shares the card's vCard 3.0 payload as a real .vcf file with the
      * text/vcard MIME type, so receiving apps recognize it as a contact and
-     * offer "add contact". Only offered for contact cards — for every
-     * other type the payload isn't a vCard. Falls back to the old
-     * text/x-vcard text extra if the file share can't be built.
+     * offer "add contact". The payload is also attached as EXTRA_TEXT in the
+     * same intent: apps that only accept plain-text shares (e.g. some SMS
+     * apps) would otherwise never appear in the chooser. Only offered for
+     * contact cards — for every other type the payload isn't a vCard. Falls
+     * back to the old text/x-vcard text extra if the file share can't be
+     * built.
      */
     private fun shareVcard() {
         val current = card ?: return
@@ -451,6 +454,10 @@ class CardDetailActivity : AppCompatActivity() {
             val send = Intent(Intent.ACTION_SEND).apply {
                 type = "text/vcard"
                 putExtra(Intent.EXTRA_STREAM, uri)
+                // EXTRA_TEXT rides along so text-only share targets (like
+                // SMS apps) appear in the chooser too; contact apps take the
+                // .vcf stream.
+                putExtra(Intent.EXTRA_TEXT, current.payload)
                 putExtra(Intent.EXTRA_SUBJECT, current.name)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
