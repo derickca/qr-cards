@@ -3,6 +3,7 @@ package ca.derickcampbell.qrcards.ui
 import android.content.Context
 import android.content.res.ColorStateList
 import android.view.LayoutInflater
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import androidx.recyclerview.widget.RecyclerView
@@ -24,16 +25,42 @@ fun typeLabel(type: CardType, context: Context): String = when (type) {
     CardType.CALENDAR_EVENT -> context.getString(R.string.type_calendar_event)
 }
 
-/** Library rows: name, type label, optional label-color dot. */
-class CardAdapter(private val onClick: (QrCard) -> Unit) :
-    RecyclerView.Adapter<CardAdapter.Holder>() {
+/** Library rows: name, type label, optional label-color dot, drag handle. */
+class CardAdapter(
+    private val onClick: (QrCard) -> Unit,
+    private val onStartDrag: (RecyclerView.ViewHolder) -> Unit = {},
+) : RecyclerView.Adapter<CardAdapter.Holder>() {
 
     private var cards: List<QrCard> = emptyList()
+
+    /**
+     * Drag handles show only when the full (unfiltered) library is visible —
+     * reordering a search result would be meaningless.
+     */
+    var dragEnabled: Boolean = true
+        set(value) {
+            if (field == value) return
+            field = value
+            notifyDataSetChanged()
+        }
 
     fun submit(cards: List<QrCard>) {
         this.cards = cards
         notifyDataSetChanged()
     }
+
+    /** Moves a row; returns true when the positions were valid. */
+    fun move(from: Int, to: Int): Boolean {
+        if (from !in cards.indices || to !in cards.indices || from == to) return false
+        val mutable = cards.toMutableList()
+        val card = mutable.removeAt(from)
+        mutable.add(to, card)
+        cards = mutable
+        notifyItemMoved(from, to)
+        return true
+    }
+
+    fun currentIds(): List<String> = cards.map { it.id }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder {
         val binding = ItemCardBinding.inflate(
@@ -62,6 +89,14 @@ class CardAdapter(private val onClick: (QrCard) -> Unit) :
                 binding.colorDot.imageTintList = ColorStateList.valueOf(color)
             }
             binding.root.setOnClickListener { onClick(card) }
+            binding.dragHandle.visibility =
+                if (dragEnabled) View.VISIBLE else View.GONE
+            binding.dragHandle.setOnTouchListener { _, event ->
+                if (event.actionMasked == MotionEvent.ACTION_DOWN && dragEnabled) {
+                    onStartDrag(this)
+                }
+                false
+            }
         }
     }
 }

@@ -128,4 +128,49 @@
     <string name="field_starts">Starts</string>
     <string name="field_ends">Ends</string>
     <string name="field_location">Location</string>
+
+    <!-- Share-sheet card creation -->
+    <string name="share_text_only">QR Cards takes text and links — images aren’t supported, sorry!</string>
+
+    <!-- Custom QR colors -->
+    <string name="qr_color">QR code color</string>
+    <string name="qr_color_default">Default (black)</string>
+    <string name="qr_color_custom">Custom color %1$s</string>
+    <string name="qr_color_custom_entry">Custom color…</string>
+    <string name="qr_color_custom_title">Custom QR color</string>
+    <string name="qr_color_custom_message">Enter any hex color, e.g. #0B6E4F. Keep it dark — light QR codes don’t scan reliably.</string>
+    <string name="qr_color_hex_hint">#0B6E4F</string>
+    <string name="qr_color_hex_invalid">That isn’t a valid hex color</string>
+    <string name="ok">OK</string>
+
+    <!-- Social profile templates -->
+    <string name="social_templates">Social profile link</string>
+    <string name="social_template_desc">Use the %1$s template</string>
+
+    <!-- Manual ordering -->
+    <string name="reorder_card">Reorder card</string>
+
+    <!-- Card flip in Show -->
+    <string name="flip_to_data_desc">Show the encoded data behind this code</string>
+    <string name="flip_to_qr_desc">Show the QR code</string>
+    <string name="show_data_title">Encoded data</string>
+    <string name="copy">Copy</string>
+    <string name="copied">Copied</string>
+    <string name="copy_failed">Couldn’t copy</string>
+
+    <!-- vCard export -->
+    <string name="share_vcard">Share vCard</string>
+    <string name="save_vcf">Save .vcf</string>
+    <string name="vcf_saved">vCard saved</string>
+    <string name="vcf_save_failed">Couldn’t save vCard: %1$s</string>
+
+    <!-- “My Card” widget -->
+    <string name="widget_label">My Card</string>
+    <string name="widget_description">One-tap buttons that open your QR cards in present mode.</string>
+    <string name="widget_choose_count">How many buttons?</string>
+    <string name="widget_choose_cards">Card for each button</string>
+    <string name="widget_card_for_button">Card for button %1$d</string>
+    <string name="widget_add">Add widget</string>
+    <string name="widget_no_cards">You don’t have any cards yet — create one in QR Cards first, then add the widget.</string>
+    <string name="widget_open_library">Open QR Cards</string>
 </resources>

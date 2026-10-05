@@ -36,5 +36,14 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:textAppearance="?attr/textAppearanceBodySmall" />
+
+        <ImageView
+            android:id="@+id/dragHandle"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:layout_marginStart="8dp"
+            android:contentDescription="@string/reorder_card"
+            android:src="@drawable/ic_drag_handle"
+            android:visibility="gone" />
     </LinearLayout>
 </LinearLayout>

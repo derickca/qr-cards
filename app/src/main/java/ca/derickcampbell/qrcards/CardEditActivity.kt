@@ -79,6 +79,10 @@ class CardEditActivity : AppCompatActivity() {
 
     companion object {
         const val EXTRA_CARD_ID = "card_id"
+        /** Share-sheet entry: pre-selected type name ([CardType.name]). */
+        const val EXTRA_SHARE_TYPE = "share_type"
+        /** Share-sheet entry: prefill fields for the type. */
+        const val EXTRA_SHARE_FIELDS = "share_fields"
         /** Six across: five type tabs beside the fixed arrow button. */
         private const val TAB_SLOTS = 6
     }
@@ -125,6 +129,37 @@ class CardEditActivity : AppCompatActivity() {
     )
     private var selectedColor: Int? = null
     private val colorDots = mutableListOf<ImageView>()
+
+    /**
+     * QR module color. Dark-only palette: light QR modules don't scan
+     * reliably. The "none" dot is default black; the plus dot opens a custom
+     * hex entry (any color, user's responsibility to keep it dark).
+     */
+    private val qrColorOptions: List<Int?> = listOf(
+        null,
+        0xFF0B6E4F.toInt(), // teal
+        0xFF1A237E.toInt(), // navy
+        0xFF0D47A1.toInt(), // blue
+        0xFF1B5E20.toInt(), // green
+        0xFF4A148C.toInt(), // purple
+        0xFFB71C1C.toInt(), // red
+        0xFF3E2723.toInt(), // brown
+        0xFF424242.toInt(), // gray
+    )
+    private var selectedQrColor: Int? = null
+    private val qrColorDots = mutableListOf<ImageView>()
+
+    /**
+     * Social profile templates: URL cards with a per-service prefix and a
+     * "service" field tag so the list/detail can hint at the service.
+     */
+    private val socialTemplates = listOf(
+        Triple("spotify", "https://open.spotify.com/", R.drawable.ic_social_spotify),
+        Triple("instagram", "https://www.instagram.com/", R.drawable.ic_social_instagram),
+        Triple("whatsapp", "https://wa.me/", R.drawable.ic_social_whatsapp),
+        Triple("linkedin", "https://www.linkedin.com/in/", R.drawable.ic_social_linkedin),
+    )
+    private var serviceTemplate: String? = null
 
     private val pickContactLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -193,12 +228,26 @@ class CardEditActivity : AppCompatActivity() {
         if (savedInstanceState != null) {
             restoreState(savedInstanceState)
         } else {
-            currentType = card?.type ?: CardType.URL
+            // Share-sheet entry: the sniffed type is pre-selected and its
+            // fields pre-filled — the user still confirms before saving.
+            val shareType = intent.getStringExtra(EXTRA_SHARE_TYPE)
+                ?.let { runCatching { CardType.valueOf(it) }.getOrNull() }
+            @Suppress("UNCHECKED_CAST")
+            val shareFields =
+                intent.getSerializableExtra(EXTRA_SHARE_FIELDS) as? HashMap<String, String>
+            if (card == null && shareType != null) {
+                currentType = shareType
+                typeFieldCache[shareType] = HashMap(shareFields ?: emptyMap())
+            } else {
+                currentType = card?.type ?: CardType.URL
+            }
             card?.fieldOptions?.forEach { (key, options) ->
                 optionLists[key] = options.toMutableList()
             }
             binding.cardNameInput.setText(card?.name.orEmpty())
             selectedColor = card?.labelColor
+            selectedQrColor = card?.qrColor
+            serviceTemplate = card?.takeIf { it.type == CardType.URL }?.fields?.get("service")
             binding.sensitiveCheck.isChecked = card?.sensitive == true
         }
 
@@ -209,6 +258,7 @@ class CardEditActivity : AppCompatActivity() {
 
         buildForm(prefillFor(currentType))
         buildColorRow()
+        buildQrColorRow()
         binding.cancelButton.setOnClickListener { onCancel() }
         binding.saveButton.setOnClickListener { save() }
         // Registered last so prefills and restores never mark the form dirty.
@@ -221,6 +271,7 @@ class CardEditActivity : AppCompatActivity() {
         outState.putString("currentType", currentType.name)
         outState.putInt("tabScrollX", binding.typeTabStrip.scrollX)
         if (selectedColor != null) outState.putInt("selectedColor", selectedColor!!)
+        if (selectedQrColor != null) outState.putInt("selectedQrColor", selectedQrColor!!)
         outState.putString("cardName", binding.cardNameInput.text?.toString().orEmpty())
         outState.putBoolean("sensitive", binding.sensitiveCheck.isChecked)
         outState.putBoolean("formDirty", formDirty)
@@ -240,6 +291,7 @@ class CardEditActivity : AppCompatActivity() {
             .getOrDefault(CardType.URL)
         pendingTabScrollX = state.getInt("tabScrollX", -1)
         selectedColor = if (state.containsKey("selectedColor")) state.getInt("selectedColor") else null
+        selectedQrColor = if (state.containsKey("selectedQrColor")) state.getInt("selectedQrColor") else null
         binding.cardNameInput.setText(state.getString("cardName").orEmpty())
         binding.sensitiveCheck.isChecked = state.getBoolean("sensitive")
         formDirty = state.getBoolean("formDirty")
@@ -615,10 +667,22 @@ class CardEditActivity : AppCompatActivity() {
         fun f(key: String) = prefill?.get(key)
 
         when (currentType) {
-            CardType.URL -> addTextField(
-                "url", getString(R.string.field_url), f("url"),
-                InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
-            )
+            CardType.URL -> {
+                // Social profile templates: one tap pre-fills the service's
+                // URL prefix. The card stays a plain URL card; "service" is
+                // just a metadata tag derived again on save.
+                addSocialTemplates(f("url"))
+                val urlField = addTextField(
+                    "url", getString(R.string.field_url), f("url"),
+                    InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+                )
+                urlField.doOnTextChanged { text, _, _, _ ->
+                    serviceTemplate = socialTemplates.firstOrNull {
+                        text.toString().startsWith(it.second, ignoreCase = true)
+                    }?.first
+                    refreshTemplateSelection()
+                }
+            }
             CardType.CONTACT -> {
                 addImportButton()
                 addTextField("firstName", getString(R.string.field_first_name), f("firstName"))
@@ -1066,6 +1130,81 @@ class CardEditActivity : AppCompatActivity() {
         datePicker.show(supportFragmentManager, "date_$key")
     }
 
+    // -- social templates --
+
+    /**
+     * Row of social-profile template buttons above the URL field. Tapping
+     * one pre-fills the service's URL prefix and tags the card with the
+     * service name (re-derived from the final URL on save, so a manual
+     * edit can't leave a stale tag).
+     */
+    private fun addSocialTemplates(prefillUrl: String?) {
+        val density = resources.displayMetrics.density
+        val label = TextView(this).apply {
+            text = getString(R.string.social_templates)
+            setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_LabelMedium)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+        binding.formContainer.addView(label)
+
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = (4 * density).toInt() }
+        }
+        socialTemplates.forEach { (service, prefix, icon) ->
+            MaterialButton(
+                this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle
+            ).apply {
+                setIconResource(icon)
+                iconGravity = MaterialButton.ICON_GRAVITY_TEXT_START
+                iconPadding = 0
+                text = null
+                contentDescription = getString(R.string.social_template_desc, service)
+                isCheckable = true
+                minimumWidth = 0
+                minWidth = 0
+                minimumHeight = 0
+                minHeight = 0
+                val size = (52 * density).toInt()
+                layoutParams = LinearLayout.LayoutParams(size, size).apply {
+                    marginEnd = (8 * density).toInt()
+                }
+                setPadding(0, 0, 0, 0)
+                setOnClickListener {
+                    val urlField = fieldLayouts["url"]?.editText
+                    urlField?.setText(prefix)
+                    urlField?.setSelection(prefix.length)
+                    urlField?.requestFocus()
+                    serviceTemplate = service
+                    formDirty = true
+                    refreshTemplateSelection()
+                }
+                tag = service
+            }.also { row.addView(it) }
+        }
+        binding.formContainer.addView(row)
+        row.post { refreshTemplateSelection() }
+    }
+
+    private fun refreshTemplateSelection() {
+        val container = binding.formContainer
+        for (i in 0 until container.childCount) {
+            val row = container.getChildAt(i) as? LinearLayout ?: continue
+            for (j in 0 until row.childCount) {
+                val btn = row.getChildAt(j) as? MaterialButton ?: continue
+                val service = btn.tag as? String ?: continue
+                btn.isChecked = service == serviceTemplate
+            }
+        }
+    }
+
     // -- label color --
 
     private fun buildColorRow() {
@@ -1122,6 +1261,123 @@ class CardEditActivity : AppCompatActivity() {
         }
     }
 
+    // -- QR code color --
+
+    private fun buildQrColorRow() {
+        binding.qrColorRow.removeAllViews()
+        qrColorDots.clear()
+        // Palette dots: index i maps to qrColorOptions[i].
+        qrColorOptions.forEachIndexed { index, color ->
+            val dot = ImageView(this).apply {
+                setImageResource(if (color == null) R.drawable.dot_none else R.drawable.dot)
+                if (color != null) imageTintList = ColorStateList.valueOf(color)
+                contentDescription =
+                    if (color == null) getString(R.string.qr_color_default)
+                    else getString(R.string.qr_color_custom, "#%06X".format(0xFFFFFF and color))
+                isClickable = true
+                isFocusable = true
+                setOnClickListener {
+                    selectedQrColor = color
+                    refreshQrColorSelection()
+                    formDirty = true
+                }
+                tag = index
+            }
+            binding.qrColorRow.addView(dot)
+            qrColorDots.add(dot)
+        }
+        // Custom-color dot: opens a hex entry dialog.
+        val customDot = ImageView(this).apply {
+            setImageResource(R.drawable.ic_custom_color)
+            contentDescription = getString(R.string.qr_color_custom_entry)
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { showCustomQrColorDialog() }
+            tag = -1
+        }
+        binding.qrColorRow.addView(customDot)
+        qrColorDots.add(customDot)
+        binding.qrColorRow.post { layoutQrColorDots() }
+        refreshQrColorSelection()
+    }
+
+    /**
+     * Sizes the dots from the row's measured width so they always fit
+     * horizontally, staying round instead of stretching.
+     */
+    private fun layoutQrColorDots() {
+        val rowWidth = binding.qrColorRow.width
+        if (rowWidth <= 0 || qrColorDots.isEmpty()) return
+        val density = resources.displayMetrics.density
+        val margin = (4 * density).toInt()
+        val pad = (5 * density).toInt()
+        val size = (rowWidth / qrColorDots.size - margin * 2)
+            .coerceAtLeast((24 * density).toInt())
+        qrColorDots.forEach { dot ->
+            dot.layoutParams = LinearLayout.LayoutParams(size, size)
+                .apply { setMargins(margin, 0, margin, 0) }
+            dot.setPadding(pad, pad, pad, pad)
+        }
+    }
+
+    private fun refreshQrColorSelection() {
+        qrColorDots.forEach { dot ->
+            val index = dot.tag as? Int ?: return@forEach
+            val isSelected = if (index == -1) {
+                // Custom dot is "selected" when the color isn't a palette one.
+                selectedQrColor != null && !qrColorOptions.contains(selectedQrColor)
+            } else {
+                qrColorOptions[index] == selectedQrColor
+            }
+            dot.background = if (isSelected) getDrawable(R.drawable.dot_ring) else null
+        }
+    }
+
+    /**
+     * Custom hex color entry. Any color is accepted — the user keeps it dark
+     * enough to scan; the palette is the safe default.
+     */
+    private fun showCustomQrColorDialog() {
+        val density = resources.displayMetrics.density
+        val inputLayout = TextInputLayout(this).apply {
+            hint = getString(R.string.qr_color_hex_hint)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                val margin = (24 * density).toInt()
+                setMargins(margin, (8 * density).toInt(), margin, 0)
+            }
+        }
+        val input = TextInputEditText(inputLayout.context).apply {
+            inputType = InputType.TYPE_CLASS_TEXT
+            val current = selectedQrColor
+            if (current != null && !qrColorOptions.contains(current)) {
+                setText("#%06X".format(0xFFFFFF and current))
+            }
+        }
+        inputLayout.addView(input)
+
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.qr_color_custom_title)
+            .setMessage(R.string.qr_color_custom_message)
+            .setView(inputLayout)
+            .setNegativeButton(R.string.cancel, null)
+            .setPositiveButton(R.string.ok) { _, _ ->
+                val hex = input.text?.toString()?.trim().orEmpty()
+                try {
+                    selectedQrColor = Color.parseColor(
+                        if (hex.startsWith("#")) hex else "#$hex"
+                    )
+                    refreshQrColorSelection()
+                    formDirty = true
+                } catch (e: IllegalArgumentException) {
+                    inputLayout.error = getString(R.string.qr_color_hex_invalid)
+                }
+            }
+            .show()
+    }
+
     // -- save --
 
     /**
@@ -1149,7 +1405,7 @@ class CardEditActivity : AppCompatActivity() {
             binding.cardNameInput.requestFocus()
             return
         }
-        val fields = collectFields()
+        val fields = collectFields().toMutableMap()
         val payload = try {
             buildPayload(currentType, fields)
         } catch (e: Exception) {
@@ -1157,6 +1413,17 @@ class CardEditActivity : AppCompatActivity() {
             return
         }
         val existing = editingCard
+        if (currentType == CardType.URL) {
+            // Tag the service from the final URL, never from the button
+            // state: a manual edit after tapping a template can't leave a
+            // stale tag.
+            val url = fields["url"].orEmpty()
+            val matched = socialTemplates.firstOrNull {
+                url.startsWith(it.second, ignoreCase = true)
+            }
+            if (matched != null) fields["service"] = matched.first
+            else fields.remove("service")
+        }
         val card = QrCard(
             id = existing?.id.orEmpty(), // blank → repository generates one
             name = name,
@@ -1165,6 +1432,7 @@ class CardEditActivity : AppCompatActivity() {
             fields = fields,
             fieldOptions = collectFieldOptions(fields),
             labelColor = selectedColor,
+            qrColor = selectedQrColor,
             sensitive = binding.sensitiveCheck.isChecked
         )
         repository.save(card)

@@ -32,6 +32,11 @@ data class QrCard(
     val labelColor: Int? = null,
     /** When true, the app confirms before displaying the code. */
     val sensitive: Boolean = false,
+    /**
+     * Custom QR module color (ARGB). Null means the default black.
+     * Palette is dark-only so codes stay scannable.
+     */
+    val qrColor: Int? = null,
 )
 
 /** One labelled value among several options for a field. */

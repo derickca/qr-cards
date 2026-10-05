@@ -22,13 +22,15 @@ import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
 object QrRenderer {
 
     /**
-     * Renders [payload] to a square [sizePx] bitmap (black on white).
+     * Renders [payload] to a square [sizePx] bitmap. [foreground] colors the
+     * dark modules (default black); keep it dark for scannability.
      * Throws [IllegalArgumentException] via ZXing if the payload is too large.
      */
     fun renderBitmap(
         payload: String,
         sizePx: Int,
         ecLevel: ErrorCorrectionLevel = ErrorCorrectionLevel.M,
+        foreground: Int = Color.BLACK,
     ): Bitmap {
         val matrix = encode(payload, ecLevel)
         val width = matrix.width
@@ -36,7 +38,7 @@ object QrRenderer {
         val pixels = IntArray(width * height)
         for (y in 0 until height) {
             for (x in 0 until width) {
-                pixels[y * width + x] = if (matrix.get(x, y)) Color.BLACK else Color.WHITE
+                pixels[y * width + x] = if (matrix.get(x, y)) foreground else Color.WHITE
             }
         }
         return Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
@@ -56,15 +58,17 @@ object QrRenderer {
         payload: String,
         ecLevel: ErrorCorrectionLevel = ErrorCorrectionLevel.H,
         modulePx: Int = 10,
+        foreground: Int = Color.BLACK,
     ): String {
         val matrix = encode(payload, ecLevel)
         val w = matrix.width
         val h = matrix.height
         val size = w * modulePx
+        val fg = "#%06X".format(0xFFFFFF and foreground)
         val sb = StringBuilder()
         sb.append("""<svg xmlns="http://www.w3.org/2000/svg" width="$size" height="$size" viewBox="0 0 $size $size">""")
         sb.append("""<rect width="$size" height="$size" fill="white"/>""")
-        sb.append("""<g fill="black">""")
+        sb.append("""<g fill="$fg">""")
         for (y in 0 until h) {
             for (x in 0 until w) {
                 if (matrix.get(x, y)) {

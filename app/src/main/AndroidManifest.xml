@@ -26,6 +26,14 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- Share sheet target: shared text becomes a new card draft.
+                 The editor always opens for confirmation — nothing is ever
+                 created silently. Images are declined with a friendly note. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
         </activity>
         <!-- Present mode. Exported so launcher app-shortcuts can deep-link here. -->
         <activity
@@ -36,6 +44,28 @@
             android:name=".CardEditActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />
+
+        <!-- "My Card" home-screen widget: 1–4 buttons opening cards in
+             present mode. No permissions needed. -->
+        <receiver
+            android:name=".widget.MyCardWidgetProvider"
+            android:exported="false"
+            android:label="@string/widget_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/my_card_widget_info" />
+        </receiver>
+
+        <activity
+            android:name=".widget.MyCardWidgetConfigureActivity"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" />
+            </intent-filter>
+        </activity>
 
         <!-- Serves PNGs shared via ACTION_SEND. Grant is per-share intent. -->
         <provider

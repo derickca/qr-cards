@@ -6,18 +6,23 @@ import android.os.Bundle
 import android.text.InputType
 import android.view.View
 import android.widget.LinearLayout
+import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.widget.doOnTextChanged
+import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import ca.derickcampbell.qrcards.data.CardBackup
 import ca.derickcampbell.qrcards.data.CardRepository
 import ca.derickcampbell.qrcards.databinding.ActivityMainBinding
 import ca.derickcampbell.qrcards.model.QrCard
+import ca.derickcampbell.qrcards.payload.ShareSniff
 import ca.derickcampbell.qrcards.ui.CardAdapter
 import ca.derickcampbell.qrcards.ui.CardShortcuts
 import ca.derickcampbell.qrcards.ui.typeLabel
+import ca.derickcampbell.qrcards.widget.MyCardWidgetProvider
 import com.google.android.material.checkbox.MaterialCheckBox
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.snackbar.Snackbar
@@ -36,6 +41,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private lateinit var repository: CardRepository
     private lateinit var adapter: CardAdapter
+    private lateinit var itemTouchHelper: ItemTouchHelper
     private var allCards: List<QrCard> = emptyList()
 
     // Password chosen in the export dialog; consumed by the launcher below.
@@ -79,14 +85,47 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
         repository = CardRepository(this)
 
-        adapter = CardAdapter { card ->
-            startActivity(
-                Intent(this, CardDetailActivity::class.java)
-                    .putExtra(CardDetailActivity.EXTRA_CARD_ID, card.id)
-            )
-        }
+        adapter = CardAdapter(
+            onClick = { card ->
+                startActivity(
+                    Intent(this, CardDetailActivity::class.java)
+                        .putExtra(CardDetailActivity.EXTRA_CARD_ID, card.id)
+                )
+            },
+            onStartDrag = { holder -> itemTouchHelper.startDrag(holder) },
+        )
         binding.cardList.layoutManager = LinearLayoutManager(this)
         binding.cardList.adapter = adapter
+
+        // Manual ordering: drag by the handle. Persisted on drop via
+        // CardRepository.saveOrder — the JSON array order is the library
+        // order, so it survives backup/restore automatically.
+        val dragCallback = object : ItemTouchHelper.SimpleCallback(
+            ItemTouchHelper.UP or ItemTouchHelper.DOWN, 0
+        ) {
+            override fun isLongPressDragEnabled(): Boolean = false
+
+            override fun onMove(
+                recyclerView: RecyclerView,
+                holder: RecyclerView.ViewHolder,
+                target: RecyclerView.ViewHolder,
+            ): Boolean = adapter.move(
+                holder.adapterPosition, target.adapterPosition
+            )
+
+            override fun onSwiped(holder: RecyclerView.ViewHolder, direction: Int) = Unit
+
+            override fun clearView(
+                recyclerView: RecyclerView, viewHolder: RecyclerView.ViewHolder
+            ) {
+                super.clearView(recyclerView, viewHolder)
+                repository.saveOrder(adapter.currentIds())
+                allCards = repository.list()
+                CardShortcuts.refresh(this@MainActivity)
+            }
+        }
+        itemTouchHelper = ItemTouchHelper(dragCallback)
+        itemTouchHelper.attachToRecyclerView(binding.cardList)
 
         binding.searchInput.doOnTextChanged { text, _, _, _ ->
             applyFilter(text?.toString().orEmpty())
@@ -112,6 +151,40 @@ class MainActivity : AppCompatActivity() {
                 else -> false
             }
         }
+
+        handleShareIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleShareIntent(intent)
+    }
+
+    /**
+     * Share-sheet entry: shared text becomes a new-card draft. The type is
+     * sniffed ([ShareSniff]) but the editor always opens for confirmation —
+     * nothing is ever created silently. A blank share (or anything that
+     * isn't text) gets a friendly note instead of a broken editor.
+     */
+    private fun handleShareIntent(intent: Intent) {
+        if (intent.action != Intent.ACTION_SEND) return
+        val text = intent.getStringExtra(Intent.EXTRA_TEXT)?.trim().orEmpty()
+        if (text.isEmpty()) {
+            Toast.makeText(
+                this, R.string.share_text_only, Toast.LENGTH_LONG
+            ).show()
+            return
+        }
+        val draft = ShareSniff.sniff(text)
+        startActivity(
+            Intent(this, CardEditActivity::class.java)
+                .putExtra(CardEditActivity.EXTRA_SHARE_TYPE, draft.type.name)
+                .putExtra(
+                    CardEditActivity.EXTRA_SHARE_FIELDS,
+                    HashMap(draft.fields),
+                )
+        )
     }
 
     override fun onResume() {
@@ -257,12 +330,16 @@ class MainActivity : AppCompatActivity() {
     private fun refresh() {
         allCards = repository.list()
         applyFilter(binding.searchInput.text?.toString().orEmpty())
-        // Every library change republishes the quick-access shortcuts.
+        // Every library change republishes the quick-access shortcuts and
+        // refreshes widget buttons (names change, cards get deleted).
         CardShortcuts.refresh(this)
+        MyCardWidgetProvider.updateAll(this)
     }
 
     private fun applyFilter(query: String) {
         val q = query.trim().lowercase()
+        // Drag handles only make sense on the full, unfiltered library.
+        adapter.dragEnabled = q.isEmpty()
         val filtered = if (q.isEmpty()) {
             allCards
         } else {

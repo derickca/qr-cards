@@ -47,6 +47,20 @@ class CardRepository(private val context: Context) {
     @Synchronized
     fun replaceAll(cards: List<QrCard>) = writeAll(cards)
 
+    /**
+     * Persists a manual reorder (drag-and-drop in the library). Cards not in
+     * [ids] keep their relative order at the end, so a partial id list can
+     * never lose a card. Order survives backup/restore: it is the cards
+     * array order in the JSON file.
+     */
+    @Synchronized
+    fun saveOrder(ids: List<String>) {
+        val all = readAll()
+        val byId = all.associateBy { it.id }
+        val wanted = ids.toSet()
+        writeAll(ids.mapNotNull { byId[it] } + all.filter { it.id !in wanted })
+    }
+
     // -- persistence --
 
     private fun readAll(): List<QrCard> {
@@ -85,6 +99,7 @@ class CardRepository(private val context: Context) {
             })
             .put("labelColor", card.labelColor)
             .put("sensitive", card.sensitive)
+            .put("qrColor", card.qrColor)
 
     internal fun fromJson(o: JSONObject): QrCard {
         val fieldsObj = o.optJSONObject("fields") ?: JSONObject()
@@ -111,6 +126,8 @@ class CardRepository(private val context: Context) {
             fieldOptions = fieldOptions,
             labelColor = if (o.isNull("labelColor")) null else o.getInt("labelColor"),
             sensitive = o.optBoolean("sensitive", false),
+            // Absent in backups written before custom QR colors existed.
+            qrColor = if (o.isNull("qrColor")) null else o.getInt("qrColor"),
         )
     }
 }
