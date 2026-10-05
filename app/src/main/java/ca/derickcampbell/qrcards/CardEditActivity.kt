@@ -936,16 +936,56 @@ class CardEditActivity : AppCompatActivity() {
      * Every phone number and email is kept (with its label); the primary one
      * becomes the selected value.
      */
+    /** Step-scoped import logging: every phase logs under one tag so a
+     * failed import is diagnosable from logcat ("contact-import [step]"). */
+    private fun logImport(step: String, msg: String, e: Throwable? = null) {
+        if (e == null) android.util.Log.d("CardEditActivity", "contact-import [$step] $msg")
+        else android.util.Log.e("CardEditActivity", "contact-import [$step] $msg", e)
+    }
+
+    private fun hasReadContactsPermission(): Boolean =
+        checkSelfPermission(android.Manifest.permission.READ_CONTACTS) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+
+    /**
+     * Imports the contact the user picked. The read and the form update are
+     * separate steps: the contact is read fully first, then applied to the
+     * Contact form in one go — so a successful import always lands every
+     * mapped field on screen, and a failed read never leaves a half-built
+     * form behind.
+     *
+     * The system picker grants one-time access to just this contact's URI.
+     * That grant covers ONLY the exact returned URI (URI grants are
+     * exact-match; there is no prefix grant unless the picker sets
+     * FLAG_GRANT_PREFIX_URI_PERMISSION, which it doesn't). So the contact
+     * row reads fine, but the derived /data URI may throw SecurityException
+     * on strict devices — that is the expected trigger for the permission
+     * fallback below, not a malfunction.
+     *
+     * Every phone number and email is kept (with its label); the primary one
+     * becomes the selected value.
+     */
     private fun importContact(contactUri: Uri) {
+        val hasPermission = hasReadContactsPermission()
+        logImport(
+            "start",
+            "uri=$contactUri permissionAsked=$contactsPermissionAsked " +
+                "hasReadContacts=$hasPermission"
+        )
         try {
-            applyImportedContact(readContact(contactUri))
+            val imported = readContact(contactUri, hasPermission)
+            applyImportedContact(imported)
+            logImport(
+                "done",
+                "applied phones=${imported.phones.size} emails=${imported.emails.size}"
+            )
         } catch (e: SecurityException) {
             // The picker's one-time grant didn't cover the data rows: ask
             // for the contacts permission once and retry the same contact.
-            android.util.Log.e("CardEditActivity", "Contact import blocked", e)
-            if (contactsPermissionAsked) {
-                // Already asked and the retry still can't read: genuine
-                // failure — never re-request in a loop.
+            logImport("blocked", "uri=$contactUri hasReadContacts=$hasPermission", e)
+            if (contactsPermissionAsked || hasPermission) {
+                // Already asked (or already held the permission) and still
+                // blocked: genuine failure — never re-request in a loop.
                 contactsPermissionAsked = false
                 Toast.makeText(this, R.string.contact_import_failed, Toast.LENGTH_SHORT).show()
             } else {
@@ -954,7 +994,10 @@ class CardEditActivity : AppCompatActivity() {
                 requestContactsPermission.launch(android.Manifest.permission.READ_CONTACTS)
             }
         } catch (e: Exception) {
-            android.util.Log.e("CardEditActivity", "Contact import failed", e)
+            logImport(
+                "failed",
+                "uri=$contactUri ${e.javaClass.simpleName}: ${e.message}", e
+            )
             contactsPermissionAsked = false
             Toast.makeText(this, R.string.contact_import_failed, Toast.LENGTH_SHORT).show()
         }
@@ -970,19 +1013,30 @@ class CardEditActivity : AppCompatActivity() {
         val website: String,
     )
 
-    private fun readContact(contactUri: Uri): ImportedContact {
+    private fun readContact(contactUri: Uri, hasPermission: Boolean): ImportedContact {
         val cr = contentResolver
-        // On the permission-granted retry, resolve the concrete contact URI
-        // first: the picker's one-time-grant URI can have device-specific
-        // quirks that a plain READ_CONTACTS query doesn't.
-        val resolved = if (contactsPermissionAsked) {
-            runCatching { ContactsContract.Contacts.lookupContact(cr, contactUri) }
-                .getOrNull() ?: contactUri
+        // With READ_CONTACTS, resolve the concrete contact URI first via
+        // lookupContact(): no grant needed, so device-specific picker-URI
+        // quirks can't bite. Without it, use the picker URI exactly as
+        // returned — the grant covers that URI and nothing derived from it.
+        val resolved: Uri
+        if (hasPermission) {
+            val lookedUp = runCatching {
+                ContactsContract.Contacts.lookupContact(cr, contactUri)
+            }.onFailure { e ->
+                logImport("lookup", "lookupContact threw for $contactUri", e)
+            }.getOrNull()
+            if (lookedUp == null) {
+                logImport("lookup", "lookupContact returned null for $contactUri; using picker URI")
+            }
+            resolved = lookedUp ?: contactUri
         } else {
-            contactUri
+            resolved = contactUri
         }
+        logImport("resolve", "resolved=$resolved")
         val dataUri =
             Uri.withAppendedPath(resolved, ContactsContract.Contacts.Data.CONTENT_DIRECTORY)
+        logImport("query", "contact row: $resolved")
         cr.query(
             resolved,
             arrayOf(
@@ -991,9 +1045,13 @@ class CardEditActivity : AppCompatActivity() {
             ),
             null, null, null,
         )?.use { c ->
-            if (!c.moveToFirst()) throw IllegalArgumentException("empty contact cursor")
+            if (!c.moveToFirst()) {
+                logImport("query", "empty cursor for $resolved")
+                throw IllegalArgumentException("empty contact cursor for $resolved")
+            }
             val displayName = c.getString(1).orEmpty()
             val (firstName, lastName) = splitName(displayName)
+            logImport("query", "name='$displayName' data: $dataUri")
 
             val phones = readContactOptions(
                 cr, dataUri,
@@ -1028,7 +1086,10 @@ class CardEditActivity : AppCompatActivity() {
             return ImportedContact(
                 firstName, lastName, organization, phones, emails, website
             )
-        } ?: throw IllegalArgumentException("empty contact cursor")
+        } ?: run {
+            logImport("query", "null cursor for $resolved")
+            throw IllegalArgumentException("null cursor for $resolved")
+        }
     }
 
     /**
@@ -1037,38 +1098,78 @@ class CardEditActivity : AppCompatActivity() {
      * set is what's on screen — with every mapped value filled in — no
      * matter what was showing before. Stale multi-value options from a
      * previous import are cleared, not left behind.
+     *
+     * The apply is atomic: everything it mutates is snapshotted first, so a
+     * failure at any point (including inside buildForm, which starts with
+     * removeAllViews()) restores the previous form intact instead of leaving
+     * the fields wiped. The error toast still shows via importContact.
      */
     private fun applyImportedContact(imported: ImportedContact) {
         contactsPermissionAsked = false
-        if (imported.phones.isNotEmpty()) {
-            optionLists["phone"] = imported.phones.toMutableList()
-            optionSelection["phone"] = 0
-        } else {
-            optionLists.remove("phone")
-            optionSelection.remove("phone")
+        val prevType = currentType
+        val prevPhoneOptions = optionLists["phone"]?.toMutableList()
+        val prevPhoneSelection = optionSelection["phone"]
+        val prevEmailOptions = optionLists["email"]?.toMutableList()
+        val prevEmailSelection = optionSelection["email"]
+        val prevContactCache = typeFieldCache[CardType.CONTACT]?.toMutableMap()
+        try {
+            if (imported.phones.isNotEmpty()) {
+                optionLists["phone"] = imported.phones.toMutableList()
+                optionSelection["phone"] = 0
+            } else {
+                optionLists.remove("phone")
+                optionSelection.remove("phone")
+            }
+            if (imported.emails.isNotEmpty()) {
+                optionLists["email"] = imported.emails.toMutableList()
+                optionSelection["email"] = 0
+            } else {
+                optionLists.remove("email")
+                optionSelection.remove("email")
+            }
+            // Cache under CONTACT so switching types and back keeps the import.
+            typeFieldCache[CardType.CONTACT] = mutableMapOf(
+                "firstName" to imported.firstName,
+                "lastName" to imported.lastName,
+                "organization" to imported.organization,
+                "phone" to imported.phones.firstOrNull()?.value.orEmpty(),
+                "email" to imported.emails.firstOrNull()?.value.orEmpty(),
+                "website" to imported.website,
+            )
+            currentType = CardType.CONTACT
+            refreshTypeHeader()
+            refreshTypeTabs()
+            buildForm(CardType.CONTACT, prefillFor(CardType.CONTACT))
+            scrollToType(CardType.CONTACT, smooth = true)
+            formDirty = true
+        } catch (e: Exception) {
+            logImport("apply", "apply failed; restoring $prevType form", e)
+            if (prevPhoneOptions != null) {
+                optionLists["phone"] = prevPhoneOptions
+                prevPhoneSelection?.let { optionSelection["phone"] = it }
+                    ?: optionSelection.remove("phone")
+            } else {
+                optionLists.remove("phone")
+                optionSelection.remove("phone")
+            }
+            if (prevEmailOptions != null) {
+                optionLists["email"] = prevEmailOptions
+                prevEmailSelection?.let { optionSelection["email"] = it }
+                    ?: optionSelection.remove("email")
+            } else {
+                optionLists.remove("email")
+                optionSelection.remove("email")
+            }
+            if (prevContactCache != null) typeFieldCache[CardType.CONTACT] = prevContactCache
+            else typeFieldCache.remove(CardType.CONTACT)
+            currentType = prevType
+            refreshTypeHeader()
+            refreshTypeTabs()
+            // Best-effort restore of the previous form; never throws out.
+            runCatching { buildForm(prevType, prefillFor(prevType)) }
+                .onFailure { re -> logImport("apply", "restore also failed", re) }
+            throw e
         }
-        if (imported.emails.isNotEmpty()) {
-            optionLists["email"] = imported.emails.toMutableList()
-            optionSelection["email"] = 0
-        } else {
-            optionLists.remove("email")
-            optionSelection.remove("email")
-        }
-        // Cache under CONTACT so switching types and back keeps the import.
-        typeFieldCache[CardType.CONTACT] = mutableMapOf(
-            "firstName" to imported.firstName,
-            "lastName" to imported.lastName,
-            "organization" to imported.organization,
-            "phone" to imported.phones.firstOrNull()?.value.orEmpty(),
-            "email" to imported.emails.firstOrNull()?.value.orEmpty(),
-            "website" to imported.website,
-        )
-        currentType = CardType.CONTACT
-        refreshTypeHeader()
-        refreshTypeTabs()
-        buildForm(CardType.CONTACT, prefillFor(CardType.CONTACT))
-        scrollToType(CardType.CONTACT, smooth = true)
-        formDirty = true
     }
 
     private fun readContactOptions(

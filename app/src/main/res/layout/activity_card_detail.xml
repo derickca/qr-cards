@@ -81,7 +81,7 @@
         android:layout_height="wrap_content"
         android:gravity="center"
         android:orientation="horizontal"
-        android:paddingTop="16dp">
+        android:paddingTop="24dp">
 
         <FrameLayout
             android:id="@+id/copyPayloadButton"
@@ -178,7 +178,7 @@
         android:layout_height="wrap_content"
         android:gravity="center"
         android:orientation="horizontal"
-        android:paddingTop="12dp">
+        android:paddingTop="20dp">
 
         <FrameLayout
             android:id="@+id/sharePngButton"
@@ -250,14 +250,15 @@
     </LinearLayout>
 
     <!-- Management actions: Edit and Delete live in their own row at the
-         bottom, separate from the content actions above. -->
+         bottom, separated from the content actions above by a deliberately
+         larger gap. -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:gravity="center"
         android:orientation="horizontal"
         android:paddingBottom="24dp"
-        android:paddingTop="12dp">
+        android:paddingTop="32dp">
 
         <Button
             android:id="@+id/editButton"

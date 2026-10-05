@@ -259,6 +259,29 @@ class CardDetailActivity : AppCompatActivity() {
             // The data rows are rebuilt, so re-attach the flip tap to the
             // new row views: tapping any of them flips back to the QR.
             attachFlipEverywhere(binding.dataRows, flipTap)
+            // Top-align the back face with the QR bitmap: the QR is
+            // fitCenter'd, so its top edge depends on the container size.
+            // Measure the displayed bitmap rect once laid out and start the
+            // data face at the same Y (never above the 24dp base padding).
+            binding.qrImage.post {
+                val d = binding.qrImage.drawable
+                if (d != null && d.intrinsicWidth > 0 && d.intrinsicHeight > 0) {
+                    val rect = android.graphics.RectF(
+                        0f, 0f,
+                        d.intrinsicWidth.toFloat(), d.intrinsicHeight.toFloat()
+                    )
+                    binding.qrImage.imageMatrix.mapRect(rect)
+                    val density = resources.displayMetrics.density
+                    val qrTop = rect.top.toInt().coerceAtLeast(0)
+                    val basePad = (24 * density).toInt()
+                    binding.qrDataView.setPadding(
+                        binding.qrDataView.paddingLeft,
+                        maxOf(basePad, qrTop),
+                        binding.qrDataView.paddingRight,
+                        binding.qrDataView.paddingBottom
+                    )
+                }
+            }
         } catch (e: Exception) {
             Toast.makeText(this, R.string.render_failed, Toast.LENGTH_LONG).show()
             finish()
@@ -455,14 +478,17 @@ class CardDetailActivity : AppCompatActivity() {
     // -- vCard --
 
     /**
-     * Shares the card's vCard 3.0 payload as a real .vcf file with the
-     * text/vcard MIME type, so receiving apps recognize it as a contact and
-     * offer "add contact". The payload is also attached as EXTRA_TEXT in the
-     * same intent: apps that only accept plain-text shares (e.g. some SMS
-     * apps) would otherwise never appear in the chooser. Only offered for
+     * Shares the card's vCard 3.0 payload as a real .vcf file. The MIME type
+     * is text/x-vcard — not text/vcard — deliberately: that is the platform
+     * convention the AOSP/Google Contacts app itself uses for ACTION_SEND
+     * contact shares, and it is what messaging apps register for. (Verified
+     * against the AOSP share path: sharing a contact from the system Contacts
+     * app sends ACTION_SEND with typ=text/x-vcard; Google Messages appears
+     * for that type but not for text/vcard.) The payload also rides along as
+     * EXTRA_TEXT in the same intent so text-only share targets appear in the
+     * chooser too; contact apps take the .vcf stream. Only offered for
      * contact cards — for every other type the payload isn't a vCard. Falls
-     * back to the old text/x-vcard text extra if the file share can't be
-     * built.
+     * back to a text-only share if the file share can't be built.
      */
     private fun shareVcard() {
         val current = card ?: return
@@ -476,7 +502,9 @@ class CardDetailActivity : AppCompatActivity() {
                 this, "${packageName}.fileprovider", file
             )
             val send = Intent(Intent.ACTION_SEND).apply {
-                type = "text/vcard"
+                // text/x-vcard: the platform convention (see KDoc). A
+                // previous text/vcard build hid SMS apps from the chooser.
+                type = "text/x-vcard"
                 putExtra(Intent.EXTRA_STREAM, uri)
                 // EXTRA_TEXT rides along so text-only share targets (like
                 // SMS apps) appear in the chooser too; contact apps take the
