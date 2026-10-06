@@ -68,6 +68,17 @@ data class FieldOption(
     val value: String,
 ) : java.io.Serializable
 
+/**
+ * One slot in the library's visual order: a folder header or a top-level
+ * card. Children of a folder are not listed — they render under their
+ * folder header in card-array order. This is what lets top-level cards sit
+ * above, below, or between folders instead of always trailing after them.
+ */
+sealed interface OrderEntry {
+    data class Folder(val id: String) : OrderEntry
+    data class Card(val id: String) : OrderEntry
+}
+
 enum class CardType {
     CONTACT,
     URL,

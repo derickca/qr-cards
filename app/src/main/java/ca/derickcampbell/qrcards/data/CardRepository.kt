@@ -4,6 +4,7 @@ import android.content.Context
 import ca.derickcampbell.qrcards.model.CardFolder
 import ca.derickcampbell.qrcards.model.CardType
 import ca.derickcampbell.qrcards.model.FieldOption
+import ca.derickcampbell.qrcards.model.OrderEntry
 import ca.derickcampbell.qrcards.model.QrCard
 import org.json.JSONArray
 import org.json.JSONObject
@@ -46,8 +47,11 @@ class CardRepository(private val context: Context) {
 
     /** Replaces the whole library (used by backup restore). */
     @Synchronized
-    fun replaceAll(cards: List<QrCard>, folders: List<CardFolder> = emptyList()) =
-        writeLibrary(cards, folders)
+    fun replaceAll(
+        cards: List<QrCard>,
+        folders: List<CardFolder> = emptyList(),
+        order: List<OrderEntry> = emptyList(),
+    ) = writeLibrary(cards, folders, order)
 
     // -- folders --
 
@@ -60,47 +64,65 @@ class CardRepository(private val context: Context) {
         val withId =
             if (folder.id.isBlank()) folder.copy(id = UUID.randomUUID().toString()) else folder
         val folders = readFolders().filter { it.id != withId.id } + withId
-        writeLibrary(readAll(), folders)
+        // A brand-new folder isn't in the visual order yet; buildRows
+        // appends it at the end, same as before.
+        writeLibrary(readAll(), folders, readOrder())
         return withId
     }
 
     /**
      * Deletes a folder. Its cards are never deleted — they move back to the
-     * top level, keeping their relative order.
+     * top level, keeping their relative order, and take the folder's slot
+     * in the visual order so they land where the folder was.
      */
     @Synchronized
     fun deleteFolder(id: String) {
-        val cards = readAll().map { if (it.folderId == id) it.copy(folderId = null) else it }
-        writeLibrary(cards, readFolders().filter { it.id != id })
+        val cards = readAll()
+        val newCards = cards.map { if (it.folderId == id) it.copy(folderId = null) else it }
+        val unfiled = cards.filter { it.folderId == id }
+        val newOrder = readOrder().flatMap { entry ->
+            if (entry is OrderEntry.Folder && entry.id == id) {
+                unfiled.map { OrderEntry.Card(it.id) }
+            } else {
+                listOf(entry)
+            }
+        }
+        writeLibrary(newCards, readFolders().filter { it.id != id }, newOrder)
     }
 
     @Synchronized
     fun setFolderCollapsed(id: String, collapsed: Boolean) {
         writeLibrary(
             readAll(),
-            readFolders().map { if (it.id == id) it.copy(collapsed = collapsed) else it }
+            readFolders().map { if (it.id == id) it.copy(collapsed = collapsed) else it },
+            readOrder(),
         )
     }
 
     /**
      * Persists a manual reorder of the library list (drag-and-drop).
-     * [folderIds] is the folder-header order; [cardIds] the visible card
-     * order; [folderOf] maps card id → containing folder id (null = top
-     * level) for the cards that were visible. Cards that weren't visible
-     * (children of collapsed folders) keep their folder and relative order
-     * at the end, so a partial id list can never lose or unfile a card.
+     * [order] is the visual sequence of folder headers and top-level
+     * cards — the thing that lets a top-level card sit above, below, or
+     * between folders; [cardIds] the visible card order (children included,
+     * in row order); [folderOf] maps card id → containing folder id
+     * (null = top level) for the cards that were visible. Cards that
+     * weren't visible (children of collapsed folders) keep their folder
+     * and relative order at the end, so a partial id list can never lose
+     * or unfile a card.
      */
     @Synchronized
     fun saveStructure(
-        folderIds: List<String>,
+        order: List<OrderEntry>,
         cardIds: List<String>,
         folderOf: Map<String, String?>,
     ) {
         val folders = readFolders()
         val fById = folders.associateBy { it.id }
-        val wantedFolders = folderIds.toSet()
+        val orderedFolderIds = order.filterIsInstance<OrderEntry.Folder>()
+            .map { it.id }.toSet()
         val newFolders =
-            folderIds.mapNotNull { fById[it] } + folders.filter { it.id !in wantedFolders }
+            order.filterIsInstance<OrderEntry.Folder>().mapNotNull { fById[it.id] } +
+                folders.filter { it.id !in orderedFolderIds }
         val cards = readAll()
         val cById = cards.associateBy { it.id }
         val wantedCards = cardIds.toSet()
@@ -108,24 +130,15 @@ class CardRepository(private val context: Context) {
             val card = cById[id] ?: return@mapNotNull null
             if (folderOf.containsKey(id)) card.copy(folderId = folderOf[id]) else card
         } + cards.filter { it.id !in wantedCards }
-        writeLibrary(newCards, newFolders)
-    }
-
-    /**
-     * Persists a manual reorder (drag-and-drop in the library). Cards not in
-     * [ids] keep their relative order at the end, so a partial id list can
-     * never lose a card. Order survives backup/restore: it is the cards
-     * array order in the JSON file.
-     */
-    @Synchronized
-    fun saveOrder(ids: List<String>) {
-        val all = readAll()
-        val byId = all.associateBy { it.id }
-        val wanted = ids.toSet()
-        writeLibrary(
-            ids.mapNotNull { byId[it] } + all.filter { it.id !in wanted },
-            readFolders()
-        )
+        // Drop order entries pointing at unknown ids (hand-edited file);
+        // buildRows appends anything missing, so this can't lose content.
+        val saneOrder = order.filter {
+            when (it) {
+                is OrderEntry.Folder -> it.id in fById
+                is OrderEntry.Card -> it.id in cById
+            }
+        }
+        writeLibrary(newCards, newFolders, saneOrder)
     }
 
     // -- persistence --
@@ -154,16 +167,55 @@ class CardRepository(private val context: Context) {
         }
     }
 
-    private fun writeAll(cards: List<QrCard>) = writeLibrary(cards, readFolders())
+    private fun writeAll(cards: List<QrCard>) =
+        writeLibrary(cards, readFolders(), readOrder())
 
-    private fun writeLibrary(cards: List<QrCard>, folders: List<CardFolder>) {
+    private fun writeLibrary(
+        cards: List<QrCard>,
+        folders: List<CardFolder>,
+        order: List<OrderEntry>,
+    ) {
         val cardsArr = JSONArray()
         cards.forEach { cardsArr.put(toJson(it)) }
         val foldersArr = JSONArray()
         folders.forEach { foldersArr.put(folderToJson(it)) }
+        val orderArr = JSONArray()
+        order.forEach {
+            orderArr.put(
+                when (it) {
+                    is OrderEntry.Folder -> JSONObject().put("t", "f").put("id", it.id)
+                    is OrderEntry.Card -> JSONObject().put("t", "c").put("id", it.id)
+                }
+            )
+        }
         file.writeText(
-            JSONObject().put("cards", cardsArr).put("folders", foldersArr).toString()
+            JSONObject().put("cards", cardsArr).put("folders", foldersArr)
+                .put("order", orderArr).toString()
         )
+    }
+
+    /**
+     * The persisted visual order of folder headers and top-level cards.
+     * Empty for libraries written before interleaved top-level cards
+     * existed — callers fall back to folders-first, then top-level cards.
+     */
+    @Synchronized
+    fun readOrder(): List<OrderEntry> {
+        val f = file
+        if (!f.exists()) return emptyList()
+        return try {
+            val arr = JSONObject(f.readText()).optJSONArray("order") ?: JSONArray()
+            List(arr.length()) { i ->
+                val o = arr.optJSONObject(i) ?: return@List null
+                when (o.optString("t")) {
+                    "f" -> OrderEntry.Folder(o.getString("id"))
+                    "c" -> OrderEntry.Card(o.getString("id"))
+                    else -> null
+                }
+            }.filterNotNull()
+        } catch (_: Exception) {
+            emptyList()
+        }
     }
 
     internal fun toJson(card: QrCard): JSONObject =

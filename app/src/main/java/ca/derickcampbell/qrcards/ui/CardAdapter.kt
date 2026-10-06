@@ -2,6 +2,7 @@ package ca.derickcampbell.qrcards.ui
 
 import android.content.Context
 import android.content.res.ColorStateList
+import android.graphics.Color
 import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
@@ -31,6 +32,20 @@ fun typeLabel(type: CardType, context: Context): String = when (type) {
 sealed interface LibraryRow {
     data class FolderRow(val folder: CardFolder) : LibraryRow
     data class CardRow(val card: QrCard, val inFolder: Boolean) : LibraryRow
+}
+
+/**
+ * Where a dragged row lands when released. [IntoFolder] files a card as
+ * the first child of the folder; [AtGap] inserts before [insertPos] —
+ * [folderId] null means a top-level landing (above, below, or between
+ * folders), non-null means as a child of that folder at that position.
+ * The host draws the matching indicator while dragging so the landing
+ * spot is never a surprise.
+ */
+sealed interface DropTarget {
+    data object None : DropTarget
+    data class IntoFolder(val folderId: String, val headerPos: Int) : DropTarget
+    data class AtGap(val insertPos: Int, val folderId: String?) : DropTarget
 }
 
 /** Maps a folder icon key to its drawable; unknown keys fall back to folder. */
@@ -85,46 +100,80 @@ class CardAdapter(
     fun currentRows(): List<LibraryRow> = rows
 
     /**
-     * Moves a row; returns true when the positions were valid. Dragging a
+     * Applies a finished drag: removes the row at [fromPos] and inserts it
+     * at [target], taking folder membership from the target — never from
+     * whatever header happens to precede the landing spot. Dragging a
      * folder header moves the folder with its visible children as one
-     * block. Dropping a card onto a folder header files it inside as the
-     * first child — except at the very top of the list, where dropping
-     * above the first folder unfiles the card to the top level. The host
-     * derives folder assignments from the row order on drop.
+     * block; folders can't nest, so a folder dropped onto a header lands
+     * before it instead. Returns false when the drop changes nothing.
      */
-    fun move(from: Int, to: Int): Boolean {
-        if (from !in rows.indices || to !in rows.indices || from == to) return false
+    fun applyDrop(fromPos: Int, target: DropTarget): Boolean {
+        if (fromPos !in rows.indices || target is DropTarget.None) return false
         val mutable = rows.toMutableList()
-        val row = mutable[from]
-        if (row is LibraryRow.FolderRow) {
-            var end = from
-            while (end + 1 < mutable.size &&
-                mutable[end + 1] is LibraryRow.CardRow &&
-                (mutable[end + 1] as LibraryRow.CardRow).inFolder
-            ) {
-                end++
+        return when (val dragged = mutable[fromPos]) {
+            is LibraryRow.FolderRow -> {
+                var end = fromPos
+                while (end + 1 < mutable.size &&
+                    mutable[end + 1] is LibraryRow.CardRow &&
+                    (mutable[end + 1] as LibraryRow.CardRow).inFolder
+                ) {
+                    end++
+                }
+                val block = mutable.subList(fromPos, end + 1).toList()
+                repeat(block.size) { mutable.removeAt(fromPos) }
+                val rawInsert = when (target) {
+                    is DropTarget.IntoFolder -> target.headerPos
+                    is DropTarget.AtGap -> target.insertPos
+                    is DropTarget.None -> return false
+                }
+                // rawInsert is in pre-removal coordinates: dropping the
+                // removed block shifts everything after fromPos down.
+                var insertAt = rawInsert
+                if (rawInsert > fromPos) insertAt -= block.size
+                insertAt = insertAt.coerceIn(0, mutable.size)
+                if (insertAt == fromPos) return false
+                mutable.addAll(insertAt, block)
+                rows = mutable
+                notifyDataSetChanged()
+                true
             }
-            val block = mutable.subList(from, end + 1).toList()
-            repeat(block.size) { mutable.removeAt(from) }
-            val insertAt = (if (to > from) to - block.size + 1 else to)
-                .coerceIn(0, mutable.size)
-            mutable.addAll(insertAt, block)
-            rows = mutable
-            notifyDataSetChanged()
-        } else {
-            val card = mutable.removeAt(from)
-            var insertAt = to.coerceIn(0, mutable.size)
-            // Onto a folder header → first child of that folder; above the
-            // first header → top level (the unfile escape hatch).
-            if (insertAt > 0 && mutable.getOrNull(insertAt) is LibraryRow.FolderRow) {
-                insertAt++
+            is LibraryRow.CardRow -> {
+                mutable.removeAt(fromPos)
+                val (rawInsert, newFolderId) = when (target) {
+                    is DropTarget.IntoFolder -> (target.headerPos + 1) to target.folderId
+                    is DropTarget.AtGap -> target.insertPos to target.folderId
+                    is DropTarget.None -> return false
+                }
+                // rawInsert is in pre-removal coordinates: dropping the
+                // removed row shifts everything after fromPos down by one.
+                var insertAt = rawInsert
+                if (rawInsert > fromPos) insertAt--
+                insertAt = insertAt.coerceIn(0, mutable.size)
+                if (insertAt == fromPos && dragged.card.folderId == newFolderId) return false
+                val card = if (dragged.card.folderId == newFolderId) dragged.card
+                else dragged.card.copy(folderId = newFolderId)
+                mutable.add(
+                    insertAt,
+                    LibraryRow.CardRow(card, inFolder = newFolderId != null)
+                )
+                rows = mutable
+                notifyDataSetChanged()
+                true
             }
-            mutable.add(insertAt, card)
-            rows = mutable
-            notifyItemMoved(from, insertAt)
         }
-        return true
     }
+
+    /** True when the row at [position] is a folder header. */
+    fun isFolderRow(position: Int): Boolean =
+        position in rows.indices && rows[position] is LibraryRow.FolderRow
+
+    /** True when the row at [position] is a card filed inside a folder. */
+    fun isChildRow(position: Int): Boolean =
+        (rows.getOrNull(position) as? LibraryRow.CardRow)?.inFolder == true
+
+    /** Folder id of the card row at [position], or null for top-level cards. */
+    fun cardFolderId(position: Int): String? =
+        (rows.getOrNull(position) as? LibraryRow.CardRow)?.card?.folderId
 
     override fun getItemViewType(position: Int): Int = when (rows[position]) {
         is LibraryRow.FolderRow -> VIEW_FOLDER
@@ -174,7 +223,26 @@ class CardAdapter(
             )
             binding.expandIcon.setOnClickListener { onFolderToggle(folder) }
             binding.root.setOnClickListener { onFolderToggle(folder) }
-            binding.folderName.setOnClickListener { onFolderRename(folder) }
+            // Tap zones on the name row: the words themselves rename; the
+            // blank space after the words toggles. folderName fills the row
+            // width (weight=1), so the tap's x position decides the zone.
+            // The touch listener only records; returning false keeps the
+            // ripple and click handling intact.
+            var lastTapX = 0f
+            binding.folderName.setOnTouchListener { _, event ->
+                if (event.actionMasked == MotionEvent.ACTION_DOWN) lastTapX = event.x
+                false
+            }
+            binding.folderName.setOnClickListener {
+                val tv = binding.folderName
+                // Laid-out width (not the full text): ellipsized names keep
+                // their full blank zone.
+                val textWidth = tv.layout?.getLineWidth(0)
+                    ?: tv.paint.measureText(tv.text.toString())
+                val wordsEnd = tv.paddingStart + textWidth
+                if (lastTapX <= wordsEnd) onFolderRename(folder)
+                else onFolderToggle(folder)
+            }
             binding.dragHandle.visibility =
                 if (dragEnabled) View.VISIBLE else View.GONE
             binding.dragHandle.setOnTouchListener { _, event ->
@@ -193,17 +261,32 @@ class CardAdapter(
             val context = binding.root.context
             val density = context.resources.displayMetrics.density
             val vPad = verticalPad(context)
-            val startPad = ((if (inFolder) 40 else 16) * density).toInt()
-            binding.root.setPadding(startPad, vPad, (16 * density).toInt(), vPad)
+            // Alignment: a card's name starts where a folder's name starts
+            // (row padding 16 + folder icon 24 + its margin 16 = 56dp), and
+            // an in-folder card's icon starts there too.
+            val startPad = (
+                if (inFolder) FOLDER_NAME_START_DP
+                else FOLDER_NAME_START_DP - CARD_DOT_DP - CARD_DOT_MARGIN_DP
+                ) * density
+            binding.root.setPadding(
+                startPad.toInt(), vPad, (16 * density).toInt(), vPad
+            )
             binding.cardName.text = card.name
             binding.cardType.text = typeLabel(card.type, context)
             val color = card.labelColor
             if (color == null) {
                 // INVISIBLE (not GONE) keeps the text column aligned.
                 binding.colorDot.visibility = View.INVISIBLE
+                binding.colorDot.background = null
             } else {
                 binding.colorDot.visibility = View.VISIBLE
                 binding.colorDot.imageTintList = ColorStateList.valueOf(color)
+                // Dark dots vanish on dark rows: echo the editor's
+                // selection ring so black (and other dark colors) stay
+                // visible in the list.
+                binding.colorDot.background =
+                    if (isDark(color)) context.getDrawable(R.drawable.dot_ring)
+                    else null
             }
             binding.root.setOnClickListener { onCardClick(card) }
             binding.dragHandle.visibility =
@@ -220,5 +303,20 @@ class CardAdapter(
     companion object {
         private const val VIEW_FOLDER = 0
         private const val VIEW_CARD = 1
+        /**
+         * Row geometry, dp: folder icon (24) + its trailing margin (16) +
+         * row padding (16) = 56, the left edge of every folder name.
+         */
+        private const val FOLDER_NAME_START_DP = 56
+        private const val CARD_DOT_DP = 12
+        private const val CARD_DOT_MARGIN_DP = 16
+
+        /** True for colors too dark to see on a dark row (black, navy...). */
+        private fun isDark(color: Int): Boolean {
+            val lum = 0.2126f * Color.red(color) / 255f +
+                0.7152f * Color.green(color) / 255f +
+                0.0722f * Color.blue(color) / 255f
+            return lum < 0.25f
+        }
     }
 }

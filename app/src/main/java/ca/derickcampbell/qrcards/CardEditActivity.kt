@@ -10,6 +10,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.provider.ContactsContract
 import android.text.InputType
+import android.view.ContextThemeWrapper
 import android.view.Gravity
 import android.view.View
 import android.widget.ImageView
@@ -25,6 +26,7 @@ import ca.derickcampbell.qrcards.model.CardType
 import ca.derickcampbell.qrcards.model.FieldOption
 import ca.derickcampbell.qrcards.model.QrCard
 import ca.derickcampbell.qrcards.payload.CardPayloads
+import ca.derickcampbell.qrcards.ui.HsvColorPickerDialog
 import ca.derickcampbell.qrcards.ui.typeLabel
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.checkbox.MaterialCheckBox
@@ -124,6 +126,7 @@ class CardEditActivity : AppCompatActivity() {
 
     private val colorOptions: List<Int?> = listOf(
         null,
+        0xFF000000.toInt(), // black
         0xFFE53935.toInt(), // red
         0xFFFB8C00.toInt(), // orange
         0xFFFDD835.toInt(), // yellow
@@ -136,8 +139,9 @@ class CardEditActivity : AppCompatActivity() {
 
     /**
      * QR module color. Dark-only palette: light QR modules don't scan
-     * reliably. The "none" dot is default black; the plus dot opens a custom
-     * hex entry (any color, user's responsibility to keep it dark).
+     * reliably. The "none" dot is default black; the plus dot opens a
+     * visual color picker (any color, user's responsibility to keep it
+     * dark).
      */
     private val qrColorOptions: List<Int?> = listOf(
         null,
@@ -914,7 +918,15 @@ class CardEditActivity : AppCompatActivity() {
         // dropdown end icon (shown when an import yields 2+ numbers/emails)
         // throws RuntimeException on a plain EditText. It stays freely
         // editable — the dropdown is only opened via our own picker dialog.
-        val edit = MaterialAutoCompleteTextView(til.context).apply {
+        // The theme overlay pins the outlined-box style: the TextInputLayout
+        // overlay only styles editTextStyle, so without this the field
+        // renders smaller than the plain text fields.
+        val edit = MaterialAutoCompleteTextView(
+            ContextThemeWrapper(
+                til.context,
+                R.style.ThemeOverlay_QrCards_AutoCompleteOutlinedBox
+            )
+        ).apply {
             this.inputType = inputType
             setText(currentOptionValue(key, prefill))
         }
@@ -1263,6 +1275,15 @@ class CardEditActivity : AppCompatActivity() {
             refreshTypeHeader()
             refreshTypeTabs()
             buildForm(CardType.CONTACT, prefillFor(CardType.CONTACT))
+            // A fresh import names the card from the contact when the name
+            // field is still empty — never overwrites a typed name.
+            if (binding.cardNameInput.text?.toString()?.isBlank() == true) {
+                val fullName = listOf(imported.firstName, imported.lastName)
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() }
+                    .joinToString(" ")
+                if (fullName.isNotEmpty()) binding.cardNameInput.setText(fullName)
+            }
             scrollToType(CardType.CONTACT, smooth = true)
             formDirty = true
         } catch (e: Exception) {
@@ -1563,7 +1584,7 @@ class CardEditActivity : AppCompatActivity() {
         colorDots.clear()
         colorOptions.forEach { color ->
             val dot = ImageView(this).apply {
-                // Sized in layoutColorDots() so all seven dots always fit on screen.
+                // Sized in layoutColorDots() so all eight dots always fit on screen.
                 setImageResource(if (color == null) R.drawable.dot_none else R.drawable.dot)
                 if (color != null) imageTintList = ColorStateList.valueOf(color)
                 contentDescription =
@@ -1637,13 +1658,13 @@ class CardEditActivity : AppCompatActivity() {
             binding.qrColorRow.addView(dot)
             qrColorDots.add(dot)
         }
-        // Custom-color dot: opens a hex entry dialog.
+        // Custom-color dot: opens the visual color picker.
         val customDot = ImageView(this).apply {
             setImageResource(R.drawable.ic_custom_color)
             contentDescription = getString(R.string.qr_color_custom_entry)
             isClickable = true
             isFocusable = true
-            setOnClickListener { showCustomQrColorDialog() }
+            setOnClickListener { showVisualQrColorPicker() }
             tag = -1
         }
         binding.qrColorRow.addView(customDot)
@@ -1685,48 +1706,17 @@ class CardEditActivity : AppCompatActivity() {
     }
 
     /**
-     * Custom hex color entry. Any color is accepted — the user keeps it dark
-     * enough to scan; the palette is the safe default.
+     * Custom color picker: a large saturation/value plane plus hue bar you
+     * glide a finger over, with a live hex readout and Cancel/OK. Any color
+     * is accepted — the user keeps it dark enough to scan; the palette is
+     * the safe default.
      */
-    private fun showCustomQrColorDialog() {
-        val density = resources.displayMetrics.density
-        val inputLayout = TextInputLayout(this).apply {
-            hint = getString(R.string.qr_color_hex_hint)
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                val margin = (24 * density).toInt()
-                setMargins(margin, (8 * density).toInt(), margin, 0)
-            }
+    private fun showVisualQrColorPicker() {
+        HsvColorPickerDialog.show(this, selectedQrColor ?: Color.BLACK) { color ->
+            selectedQrColor = color
+            refreshQrColorSelection()
+            formDirty = true
         }
-        val input = TextInputEditText(inputLayout.context).apply {
-            inputType = InputType.TYPE_CLASS_TEXT
-            val current = selectedQrColor
-            if (current != null && !qrColorOptions.contains(current)) {
-                setText("#%06X".format(0xFFFFFF and current))
-            }
-        }
-        inputLayout.addView(input)
-
-        MaterialAlertDialogBuilder(this)
-            .setTitle(R.string.qr_color_custom_title)
-            .setMessage(R.string.qr_color_custom_message)
-            .setView(inputLayout)
-            .setNegativeButton(R.string.cancel, null)
-            .setPositiveButton(R.string.ok) { _, _ ->
-                val hex = input.text?.toString()?.trim().orEmpty()
-                try {
-                    selectedQrColor = Color.parseColor(
-                        if (hex.startsWith("#")) hex else "#$hex"
-                    )
-                    refreshQrColorSelection()
-                    formDirty = true
-                } catch (e: IllegalArgumentException) {
-                    inputLayout.error = getString(R.string.qr_color_hex_invalid)
-                }
-            }
-            .show()
     }
 
     // -- save --

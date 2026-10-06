@@ -1,4 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.QRCards" parent="Theme.Material3.DayNight.NoActionBar" />
+
+    <!--
+      The TextInputLayout theme overlay styles editTextStyle (the outlined
+      box) but not autoCompleteTextViewStyle, so a MaterialAutoCompleteTextView
+      created with the layout's context falls back to the default style and
+      renders smaller than the plain text fields. This overlay pins it to the
+      outlined-box variant so contact phone/email fields match the rest.
+    -->
+    <style name="ThemeOverlay.QrCards.AutoCompleteOutlinedBox" parent="">
+        <item name="autoCompleteTextViewStyle">@style/Widget.Material3.AutoCompleteTextView.OutlinedBox</item>
+    </style>
 </resources>

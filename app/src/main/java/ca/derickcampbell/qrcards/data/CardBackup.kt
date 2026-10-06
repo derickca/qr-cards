@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import androidx.security.crypto.EncryptedFile
 import androidx.security.crypto.MasterKey
+import ca.derickcampbell.qrcards.model.OrderEntry
 import org.json.JSONObject
 import java.io.File
 import java.security.SecureRandom
@@ -133,7 +134,23 @@ object CardBackup {
                 if (it.folderId != null && it.folderId !in folderIds) it.copy(folderId = null)
                 else it
             }
-            repo.replaceAll(saneCards, folders)
+            // The visual order is optional: backups written before
+            // interleaved top-level cards existed have no "order" array.
+            // Entries pointing at unknown ids are dropped; anything
+            // missing is appended by the normal fallbacks.
+            val cardIds = saneCards.map { it.id }.toSet()
+            val orderArr = root.optJSONArray("order")
+            val order = if (orderArr == null) emptyList()
+            else List(orderArr.length()) { i ->
+                val o = orderArr.optJSONObject(i) ?: return@List null
+                val id = o.optString("id")
+                when (o.optString("t")) {
+                    "f" -> if (id in folderIds) OrderEntry.Folder(id) else null
+                    "c" -> if (id in cardIds) OrderEntry.Card(id) else null
+                    else -> null
+                }
+            }.filterNotNull()
+            repo.replaceAll(saneCards, folders, order)
             return cards.size
         } finally {
             staging.delete()

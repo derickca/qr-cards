@@ -1,10 +1,15 @@
 package ca.derickcampbell.qrcards
 
 import android.content.Intent
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.RectF
 import android.net.Uri
 import android.os.Bundle
 import android.text.InputType
 import android.view.View
+import android.view.ViewConfiguration
 import android.widget.LinearLayout
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -18,18 +23,22 @@ import ca.derickcampbell.qrcards.data.CardBackup
 import ca.derickcampbell.qrcards.data.CardRepository
 import ca.derickcampbell.qrcards.databinding.ActivityMainBinding
 import ca.derickcampbell.qrcards.model.CardFolder
+import ca.derickcampbell.qrcards.model.OrderEntry
 import ca.derickcampbell.qrcards.model.QrCard
 import ca.derickcampbell.qrcards.payload.ShareSniff
 import ca.derickcampbell.qrcards.ui.CardAdapter
 import ca.derickcampbell.qrcards.ui.CardShortcuts
+import ca.derickcampbell.qrcards.ui.DropTarget
 import ca.derickcampbell.qrcards.ui.LibraryRow
 import ca.derickcampbell.qrcards.ui.typeLabel
 import ca.derickcampbell.qrcards.widget.MyCardWidgetProvider
 import com.google.android.material.checkbox.MaterialCheckBox
+import com.google.android.material.color.MaterialColors
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.snackbar.Snackbar
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
+import kotlin.math.abs
 
 /**
  * Library screen: searchable list of cards, FAB to create, overflow menu for
@@ -46,6 +55,17 @@ class MainActivity : AppCompatActivity() {
     private lateinit var itemTouchHelper: ItemTouchHelper
     private var allCards: List<QrCard> = emptyList()
     private var allFolders: List<CardFolder> = emptyList()
+
+    // Drag-landing indicator state. The list never reorders live during a
+    // drag; onChildDraw computes where the row would land and paints the
+    // indicator, and clearView applies the drop once.
+    private var dragTarget: DropTarget = DropTarget.None
+    private var dragFromPos: Int = RecyclerView.NO_POSITION
+    private var density = 1f
+    private lateinit var dropLinePaint: Paint
+    private lateinit var dropDotPaint: Paint
+    private lateinit var dropHighlightPaint: Paint
+    private lateinit var dropHighlightStroke: Paint
 
     // Password chosen in the export dialog; consumed by the launcher below.
     private var pendingExportPassword: CharArray? = null
@@ -102,35 +122,110 @@ class MainActivity : AppCompatActivity() {
         binding.cardList.layoutManager = LinearLayoutManager(this)
         binding.cardList.adapter = adapter
 
-        // Manual ordering: drag by the handle. Folders drag with their
-        // children as one block; dropping a card onto a folder header files
-        // it inside. Persisted on drop via CardRepository.saveStructure —
-        // the JSON array order is the library order, so it survives
-        // backup/restore automatically.
+        // Drag paints and indicator state.
+        density = resources.displayMetrics.density
+        val primary = MaterialColors.getColor(
+            this, com.google.android.material.R.attr.colorPrimary, Color.BLUE
+        )
+        dropLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = primary
+            strokeWidth = 4 * density
+            strokeCap = Paint.Cap.ROUND
+            style = Paint.Style.STROKE
+        }
+        dropDotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = primary
+            style = Paint.Style.FILL
+        }
+        dropHighlightPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = primary
+            alpha = 28
+            style = Paint.Style.FILL
+        }
+        dropHighlightStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = primary
+            alpha = 170
+            strokeWidth = 3 * density
+            style = Paint.Style.STROKE
+        }
+
+        // Manual ordering: drag by the handle. The list stays put while
+        // dragging; a live indicator shows the landing spot — a highlighted
+        // folder header means "files inside", a full-width line means a
+        // top-level landing (above, below, or between folders), an indented
+        // line means a child landing inside a folder at that position.
+        // The move is applied once on release and persisted via
+        // CardRepository.saveStructure — the JSON order array is the
+        // library order, so it survives backup/restore automatically.
         val dragCallback = object : ItemTouchHelper.SimpleCallback(
             ItemTouchHelper.UP or ItemTouchHelper.DOWN, 0
         ) {
             override fun isLongPressDragEnabled(): Boolean = false
 
+            // No live reordering: returning true keeps the dragged view
+            // floating while the indicator (onChildDraw) shows the target.
             override fun onMove(
                 recyclerView: RecyclerView,
                 holder: RecyclerView.ViewHolder,
                 target: RecyclerView.ViewHolder,
-            ): Boolean = adapter.move(
-                holder.adapterPosition, target.adapterPosition
-            )
+            ): Boolean = true
 
             override fun onSwiped(holder: RecyclerView.ViewHolder, direction: Int) = Unit
+
+            override fun onSelectedChanged(
+                viewHolder: RecyclerView.ViewHolder?,
+                actionState: Int,
+            ) {
+                super.onSelectedChanged(viewHolder, actionState)
+                if (actionState == ItemTouchHelper.ACTION_STATE_DRAG &&
+                    viewHolder != null
+                ) {
+                    dragFromPos = viewHolder.adapterPosition
+                    dragTarget = DropTarget.None
+                }
+            }
+
+            override fun onChildDraw(
+                c: Canvas,
+                recyclerView: RecyclerView,
+                viewHolder: RecyclerView.ViewHolder,
+                dX: Float,
+                dY: Float,
+                actionState: Int,
+                isCurrentlyActive: Boolean,
+            ) {
+                super.onChildDraw(
+                    c, recyclerView, viewHolder, dX, dY,
+                    actionState, isCurrentlyActive
+                )
+                if (actionState == ItemTouchHelper.ACTION_STATE_DRAG &&
+                    isCurrentlyActive
+                ) {
+                    val slop =
+                        ViewConfiguration.get(recyclerView.context).scaledTouchSlop
+                    dragTarget = if (abs(dY) < slop) DropTarget.None
+                    else computeDropTarget(recyclerView, viewHolder, dY)
+                    drawDropIndicator(c, recyclerView, dragTarget)
+                }
+            }
 
             override fun clearView(
                 recyclerView: RecyclerView, viewHolder: RecyclerView.ViewHolder
             ) {
+                val target = dragTarget
+                val fromPos = dragFromPos
+                dragTarget = DropTarget.None
+                dragFromPos = RecyclerView.NO_POSITION
                 super.clearView(recyclerView, viewHolder)
-                persistOrderFromRows()
-                allCards = repository.list()
-                allFolders = repository.listFolders()
-                applyFilter(binding.searchInput.text?.toString().orEmpty())
-                CardShortcuts.refresh(this@MainActivity)
+                if (fromPos != RecyclerView.NO_POSITION &&
+                    adapter.applyDrop(fromPos, target)
+                ) {
+                    persistOrderFromRows()
+                    allCards = repository.list()
+                    allFolders = repository.listFolders()
+                    applyFilter(binding.searchInput.text?.toString().orEmpty())
+                    CardShortcuts.refresh(this@MainActivity)
+                }
             }
         }
         itemTouchHelper = ItemTouchHelper(dragCallback)
@@ -529,50 +624,264 @@ class MainActivity : AppCompatActivity() {
         MyCardWidgetProvider.updateAll(this)
     }
 
+    // -- drag landing indicator --
+
+    /**
+     * Figures out where the dragged row would land from its current visual
+     * position: onto a folder header (files inside as first child), or into
+     * a gap — as a child at that spot, or as a top-level card above, below,
+     * or between folders. Folders can't nest, so a dragged folder always
+     * lands top-level, between folder blocks.
+     */
+    private fun computeDropTarget(
+        rv: RecyclerView,
+        holder: RecyclerView.ViewHolder,
+        dY: Float,
+    ): DropTarget {
+        val rows = adapter.currentRows()
+        val fromPos = holder.adapterPosition
+        if (fromPos == RecyclerView.NO_POSITION || fromPos !in rows.indices) {
+            return DropTarget.None
+        }
+        val draggingFolder = adapter.isFolderRow(fromPos)
+        val dragged = holder.itemView
+        val centerY = dragged.top + dY + dragged.height / 2f
+
+        val siblings = (0 until rv.childCount)
+            .map { rv.getChildAt(it) }
+            .filter { it !== dragged }
+        var hovered: View? = null
+        for (child in siblings) {
+            if (centerY >= child.top && centerY <= child.bottom) {
+                hovered = child
+                break
+            }
+        }
+        if (hovered == null) {
+            if (siblings.isEmpty()) return DropTarget.None
+            val first = siblings.first()
+            val last = siblings.last()
+            // Above everything visible: insert before the topmost visible
+            // non-dragged row. That *is* the dragged row's own slot when it
+            // hasn't moved (a later no-op), or the true top when it has.
+            if (centerY < first.top) {
+                val p = rv.getChildAdapterPosition(first)
+                return if (p == RecyclerView.NO_POSITION) DropTarget.None
+                else DropTarget.AtGap(p, null)
+            }
+            if (centerY > last.bottom) {
+                val p = rv.getChildAdapterPosition(last)
+                return if (p == RecyclerView.NO_POSITION) DropTarget.None
+                else DropTarget.AtGap(p + 1, null)
+            }
+            // Over no sibling but inside the list: the dragged view's own
+            // slot (it hasn't left home yet). Nearest sibling decides.
+            hovered = siblings.minByOrNull {
+                abs(centerY - (it.top + it.height / 2f))
+            } ?: return DropTarget.None
+        }
+        val hoveredPos = rv.getChildAdapterPosition(hovered)
+        if (hoveredPos == RecyclerView.NO_POSITION || hoveredPos !in rows.indices) {
+            return DropTarget.None
+        }
+        val before = centerY < hovered.top + hovered.height / 2f
+        if (draggingFolder) {
+            // Folders can't nest: hovering a header lands before it (upper
+            // half) or past its whole block (lower half); hovering children
+            // lands between blocks, never splitting one.
+            if (adapter.isFolderRow(hoveredPos)) {
+                return DropTarget.AtGap(
+                    if (before) hoveredPos else blockEnd(hoveredPos), null
+                )
+            }
+            return if (adapter.isChildRow(hoveredPos)) {
+                DropTarget.AtGap(
+                    if (before) blockStart(hoveredPos) else blockEnd(hoveredPos),
+                    null
+                )
+            } else {
+                DropTarget.AtGap(if (before) hoveredPos else hoveredPos + 1, null)
+            }
+        }
+        if (adapter.isFolderRow(hoveredPos)) {
+            val folderId = (rows[hoveredPos] as LibraryRow.FolderRow).folder.id
+            val fraction = (centerY - hovered.top) / hovered.height.coerceAtLeast(1)
+            // Top third of a header: land *between* (above it) as top-level;
+            // the rest of the header files the card inside the folder.
+            return if (fraction < 0.35) DropTarget.AtGap(hoveredPos, null)
+            else DropTarget.IntoFolder(folderId, hoveredPos)
+        }
+        val row = rows[hoveredPos] as? LibraryRow.CardRow ?: return DropTarget.None
+        if (!row.inFolder) {
+            return DropTarget.AtGap(if (before) hoveredPos else hoveredPos + 1, null)
+        }
+        val folderId = row.card.folderId
+            ?: return DropTarget.AtGap(
+                if (before) hoveredPos else hoveredPos + 1, null
+            )
+        // Past the last child of the block: that's the between-folders
+        // gap, a top-level landing. Anything else stays in the folder.
+        if (!before && hoveredPos + 1 >= blockEnd(hoveredPos)) {
+            return DropTarget.AtGap(hoveredPos + 1, null)
+        }
+        return DropTarget.AtGap(if (before) hoveredPos else hoveredPos + 1, folderId)
+    }
+
+    /** Header position of the folder block containing [pos]. */
+    private fun blockStart(pos: Int): Int {
+        var h = pos
+        while (h > 0 && !adapter.isFolderRow(h)) h--
+        return h
+    }
+
+    /**
+     * Adapter position just past the last visible child of the folder
+     * block containing [pos] (a header or one of its children).
+     */
+    private fun blockEnd(pos: Int): Int {
+        val start = blockStart(pos)
+        if (!adapter.isFolderRow(start)) return pos + 1
+        var i = start + 1
+        while (i < adapter.itemCount && adapter.isChildRow(i)) i++
+        return i
+    }
+
+    /**
+     * Paints the landing indicator for [target]: a highlighted folder
+     * header for "files inside", a full-width line for a top-level gap,
+     * an indented line for a landing inside a folder.
+     */
+    private fun drawDropIndicator(
+        c: Canvas,
+        rv: RecyclerView,
+        target: DropTarget,
+    ) {
+        val lm = rv.layoutManager ?: return
+        when (target) {
+            is DropTarget.None -> Unit
+            is DropTarget.IntoFolder -> {
+                val header = lm.findViewByPosition(target.headerPos) ?: return
+                val rect = RectF(
+                    header.left + 4 * density,
+                    header.top + 4 * density,
+                    header.right - 4 * density,
+                    header.bottom - 4 * density
+                )
+                val radius = 18 * density
+                c.drawRoundRect(rect, radius, radius, dropHighlightPaint)
+                c.drawRoundRect(rect, radius, radius, dropHighlightStroke)
+            }
+            is DropTarget.AtGap -> {
+                val y = if (target.insertPos >= adapter.itemCount) {
+                    (0 until rv.childCount).maxOfOrNull { rv.getChildAt(it).bottom }
+                        ?.toFloat() ?: return
+                } else {
+                    lm.findViewByPosition(target.insertPos)?.top?.toFloat() ?: return
+                }
+                // In-folder landings indent to the child content; top-level
+                // landings run near full width. Both read as "the card goes
+                // exactly here" when you let go.
+                val startX = if (target.folderId != null) 56 * density else 16 * density
+                val endX = rv.width - 16 * density
+                c.drawLine(startX, y, endX, y, dropLinePaint)
+                c.drawCircle(startX, y, 5 * density, dropDotPaint)
+            }
+        }
+    }
+
     /**
      * Derives the persisted library structure from the adapter's current
-     * row order: folder-header order, visible card order, and each visible
-     * card's containing folder (nearest preceding folder header, or null).
-     * Cards hidden inside collapsed folders keep their folder and relative
-     * order — a drag can never unfile or lose them.
+     * row order: the visual sequence of folder headers and top-level
+     * cards, the card order, and each visible card's containing folder —
+     * taken from the drop target that placed it, never guessed from its
+     * neighbors (that's what used to swallow top-level cards into
+     * folders). Cards hidden inside collapsed folders keep their folder
+     * and relative order — a drag can never unfile or lose them.
      */
     private fun persistOrderFromRows() {
-        val folderIds = mutableListOf<String>()
+        val rows = adapter.currentRows()
+        val folderIds = rows.filterIsInstance<LibraryRow.FolderRow>()
+            .map { it.folder.id }.toSet()
+        val order = mutableListOf<OrderEntry>()
         val cardIds = mutableListOf<String>()
         val folderOf = mutableMapOf<String, String?>()
-        var currentFolder: String? = null
-        for (row in adapter.currentRows()) {
+        for (row in rows) {
             when (row) {
-                is LibraryRow.FolderRow -> {
-                    folderIds += row.folder.id
-                    currentFolder = row.folder.id
-                }
+                is LibraryRow.FolderRow -> order += OrderEntry.Folder(row.folder.id)
                 is LibraryRow.CardRow -> {
+                    // Normalize cards pointing at vanished folders
+                    // (hand-edited backup): they read as top-level, and
+                    // this persists that fix.
+                    val fid = row.card.folderId?.takeIf { it in folderIds }
+                    folderOf[row.card.id] = fid
                     cardIds += row.card.id
-                    folderOf[row.card.id] = currentFolder
+                    if (fid == null) order += OrderEntry.Card(row.card.id)
                 }
             }
         }
-        repository.saveStructure(folderIds, cardIds, folderOf)
+        repository.saveStructure(order, cardIds, folderOf)
     }
 
-    /** Full library as rows: each folder header, its (expanded) cards, then top-level cards. */
+    /**
+     * Full library as rows: folder headers and top-level cards interleaved
+     * per the saved visual order, each folder's (expanded) children under
+     * its header in library order.
+     */
     private fun buildRows(cards: List<QrCard>): List<LibraryRow> {
         val rows = mutableListOf<LibraryRow>()
-        val folderIds = allFolders.map { it.id }.toSet()
+        val folderById = allFolders.associateBy { it.id }
+        val folderIds = folderById.keys
+        val cardById = cards.associateBy { it.id }
         val byFolder = cards.groupBy { it.folderId }
-        for (folder in allFolders) {
+        val emittedFolders = mutableSetOf<String>()
+        val emittedCards = mutableSetOf<String>()
+
+        fun emitFolder(folder: CardFolder) {
+            if (!emittedFolders.add(folder.id)) return
             rows += LibraryRow.FolderRow(folder)
             if (!folder.collapsed) {
                 byFolder[folder.id].orEmpty().forEach { card ->
-                    rows += LibraryRow.CardRow(card, inFolder = true)
+                    if (emittedCards.add(card.id)) {
+                        rows += LibraryRow.CardRow(card, inFolder = true)
+                    }
                 }
             }
         }
-        // Cards whose folder vanished (hand-edited backup) read as top-level
-        // here, and the next drag persists that fix.
-        cards.filter { it.folderId == null || it.folderId !in folderIds }
-            .forEach { rows += LibraryRow.CardRow(it, inFolder = false) }
+
+        // Saved visual order first: folders, with top-level cards
+        // interleaved above, below, or between them.
+        for (entry in repository.readOrder()) {
+            when (entry) {
+                is OrderEntry.Folder -> folderById[entry.id]?.let(::emitFolder)
+                is OrderEntry.Card -> {
+                    val card = cardById[entry.id] ?: continue
+                    if (card.id in emittedCards) continue
+                    // The order only ever positions top-level cards;
+                    // children ride along under their folder header.
+                    if (card.folderId?.takeIf { it in folderIds } == null) {
+                        emittedCards += card.id
+                        rows += LibraryRow.CardRow(card, inFolder = false)
+                    }
+                }
+            }
+        }
+        // Anything the order doesn't mention (new items, old backups):
+        // folders in folder order with their children, then the remaining
+        // top-level cards.
+        for (folder in allFolders) emitFolder(folder)
+        for (card in cards) {
+            if (card.id in emittedCards) continue
+            // Every folder is emitted above, so a child here would mean a
+            // vanished folder — it reads as top-level.
+            if (card.folderId?.takeIf { it in folderIds } == null) {
+                emittedCards += card.id
+                rows += LibraryRow.CardRow(card, inFolder = false)
+            } else {
+                // Child of an already-emitted folder: rendered via byFolder
+                // above; just mark it so it can't double-emit.
+                emittedCards += card.id
+            }
+        }
         return rows
     }
 
